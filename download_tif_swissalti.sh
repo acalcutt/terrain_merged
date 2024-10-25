@@ -12,4 +12,4 @@ export -f mywget
 cd swissalti
 
 # run wget in parallel using 8 thread/connection
-xargs -P 8 -n 1 -I {} bash -c "mywget '{}'" < file_list_tif_swissalti.txt
+xargs -P 8 -I {} bash -c "mywget '{}'" < ../file_list_tif_swissalti.txt
