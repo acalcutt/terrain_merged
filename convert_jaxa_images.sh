@@ -13,7 +13,7 @@ for f in $(find ${INPUT_DIR} -type f); do
   baseName=$(basename ${f})
   outFile="${OUTPUT_DIR}/${baseName}"
   echo "Conveting $f file to $outFile"
-  gdal_translate -of GTiff -ot Float32 $f $outFile
+  gdal_translate -of GTiff -ot Float32 -r lanczos $f $outFile
 done
 
 

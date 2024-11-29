@@ -16,22 +16,24 @@ italy2=${OUTPUT_DIR}/italy_warp.vrt
 swiss1=${OUTPUT_DIR}/swiss.vrt
 swiss2=${OUTPUT_DIR}/swiss_warp.vrt
 outvrt=${OUTPUT_DIR}/out.vrt
-mbtiles=${OUTPUT_DIR}/jaxa_swiss_italy_terrainrgb_z0-Z12_webp.mbtiles
+mbtiles=${OUTPUT_DIR}/jaxa_swiss_italy_terrainrgb_z0-Z12_webp_lanczos.mbtiles
 
 
 [ -d "$OUTPUT_DIR" ] || mkdir -p $OUTPUT_DIR || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
+
 #Jaxa VRT (Note: This dataset needs to be converted from Int16 to Float32 first with 'convert_jaxa_images.sh' to fix the error "Warning 1: gdalbuildvrt does not support heterogeneous band data type: expected Int16, got Float32. Skipping ./output/swiss_warp.vrt")
-gdalbuildvrt -overwrite -srcnodata -9999 -vrtnodata -9999 ${jaxavrt1} ${JAXA_INPUT_DIR}/*_DSM.tif
-gdalwarp -r cubic -t_srs EPSG:3857 -dstnodata 0 ${jaxavrt1} ${jaxavrt2}
+#gdalbuildvrt -overwrite -srcnodata -9999 -vrtnodata -9999 ${jaxavrt1} ${JAXA_INPUT_DIR}/*_DSM.tif
+gdalbuildvrt -overwrite -resolution highest -r lanczos -te -10.0 30.0 25.0 50.0 -srcnodata -9999 -vrtnodata -9999 ${jaxavrt1} ${JAXA_INPUT_DIR}/*_DSM.tif
+gdalwarp -r lanczos -t_srs EPSG:3857 -dstnodata 0 ${jaxavrt1} ${jaxavrt2}
 
 #Italy VRT
-gdalbuildvrt -overwrite ${italy1} ${ITALY_INPUT_DIR}/*.tif
-gdalwarp -r cubic -t_srs EPSG:3857 -dstnodata 0 ${italy1} ${italy2}
+gdalbuildvrt -overwrite -resolution highest -r lanczos ${italy1} ${ITALY_INPUT_DIR}/*.tif
+gdalwarp -r lanczos -t_srs EPSG:3857 -dstnodata 0 ${italy1} ${italy2}
 
 #Swiss VRT
-gdalbuildvrt -overwrite ${swiss1} ${SWISS_INPUT_DIR}/*.tif
-gdalwarp -r cubic -t_srs EPSG:3857 -dstnodata 0 ${swiss1} ${swiss2}
+gdalbuildvrt -overwrite -resolution highest -r lanczos ${swiss1} ${SWISS_INPUT_DIR}/*.tif
+gdalwarp -r lanczos -t_srs EPSG:3857 -dstnodata 0 ${swiss1} ${swiss2}
 
 #Create an ordered list of VRTs. The order matters, the vrt lower in the list should take priority
 rm filenames.txt
@@ -40,7 +42,7 @@ printf '%s\n' ${italy2} >>filenames.txt
 printf '%s\n' ${swiss2} >>filenames.txt
 
 #Create terrain mbtiles 
-gdalbuildvrt -overwrite ${outvrt} -input_file_list filenames.txt
+gdalbuildvrt -overwrite -resolution highest -r lanczos ${outvrt} -input_file_list filenames.txt
 rio rgbify -b -10000 -i 0.1 --min-z 0 --max-z 12 -j 24 --format webp ${outvrt} ${mbtiles}
 
 sqlite3 ${mbtiles} 'CREATE UNIQUE INDEX tile_index on tiles (zoom_level, tile_column, tile_row);'
