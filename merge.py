@@ -13,6 +13,7 @@ from rasterio import mask
 from PIL import Image
 from io import BytesIO
 from osgeo import gdal
+import tempfile
 
 def decode_terrainrgb(image_data, debug=False):
     """Decodes terrain rgb data into elevation data"""
@@ -40,8 +41,7 @@ def decode_terrainrgb(image_data, debug=False):
             print(f" - image_png size: {len(image_png.getvalue())}")
 
         with rasterio.open(image_png, driver='PNG') as dataset:
-            rgb = dataset.read(masked = False).astype(np.int32) # add masked = False to ensure there is no mask
-            print(f" - rgb data={rgb}") # print the rgb data
+            rgb = dataset.read(masked = False).astype(np.int32)
             if rgb.shape[0] != 3:
                 if debug:
                     print(f" - Error decoding terrain rgb: Expected 3 bands, got {rgb.shape[0]}")
@@ -50,7 +50,6 @@ def decode_terrainrgb(image_data, debug=False):
             print(f"RGB values: R min={np.min(r)}, max={np.max(r)}, G min={np.min(g)}, max={np.max(g)}, B min={np.min(b)}, max={np.max(b)}")
             try:
                 elevation = -10000 + ((r * 256 * 256 + g * 256 + b) * 0.1)
-                print(f" - Elevation min={np.min(elevation)} max={np.max(elevation)}")
             except Exception as e:
                 if debug:
                     print(f" - Error decoding terrain rgb (elevation): {e}")
@@ -63,16 +62,13 @@ def decode_terrainrgb(image_data, debug=False):
                 "dtype": rasterio.float32,
                 "driver": 'GTiff'
             })
-
+            
             elevation_raster_data = None
             elevation_raster_meta = None
-            temp_file = f"/opt/test_{tile_x}_{tile_y}_{zoom}.tif"
-            with rasterio.open(temp_file, 'w', **kwargs) as transformed_raster:
+            temp_file = tempfile.NamedTemporaryFile(suffix = ".tif", delete=True)
+            with rasterio.open(temp_file.name, 'w', **kwargs) as transformed_raster:
                transformed_raster.write(np.expand_dims(elevation, axis=0))
-            
-            np.savetxt(f"/opt/elevation_data_{tile_x}_{tile_y}_{zoom}.csv", elevation, delimiter=",") # write data as csv
-
-            elevation_raster_data = rasterio.open(temp_file) # open the file for reading
+            elevation_raster_data = rasterio.open(temp_file.name) # open the file for reading
             elevation_raster_meta = elevation_raster_data.meta  # Capture the meta data
 
         return elevation_raster_data, elevation_raster_meta
@@ -92,16 +88,13 @@ def extract_tile_data(mbtiles_path, zoom, tile_x, tile_y):
     conn.close()
     return result[0] if result else None
 
-def tile_to_raster(tile_data, bounds, output_path):
+def tile_to_raster(tile_data, bounds):
     """Converts a tile to a rasterio raster object."""
     if not tile_data:
         print(" - Error converting tile to raster: tile_data is None")
         return None
         
-    elevation_raster_data, elevation_raster_meta = decode_terrainrgb(tile_data, debug = True) # this will return a raster object
-    print(f" - elevation_raster_data: {elevation_raster_data}")
-    print(f" - elevation_raster_meta: {elevation_raster_meta}")
-
+    elevation_raster_data, elevation_raster_meta = decode_terrainrgb(tile_data, debug = True)
     if not elevation_raster_data or not elevation_raster_meta:
         print(" - Error converting tile to raster: could not decode tile_data")
         return None
@@ -112,12 +105,12 @@ def tile_to_raster(tile_data, bounds, output_path):
         'transform': rasterio.transform.from_bounds(bounds.west, bounds.south, bounds.east, bounds.north, elevation_raster_meta['width'], elevation_raster_meta['height'])
     })
 
-
     try:
-        with rasterio.open(output_path, 'w', **kwargs) as transformed_raster: # Write to a tif file
-            transformed_raster.write(elevation_raster_data.read()) # Write to the raster
-        return transformed_raster
-        
+      with tempfile.NamedTemporaryFile(suffix=".tif", delete = True) as tmp_file:
+          with rasterio.open(tmp_file.name, 'w', **kwargs) as transformed_raster:
+            transformed_raster.write(elevation_raster_data.read())
+          return rasterio.open(tmp_file.name)
+
     except Exception as e:
         print(f" - Error converting tile to raster: {e}")
         return None
@@ -148,7 +141,8 @@ def mbtiles_to_raster(mbtiles_path, zoom, selected_tiles=None):
                 if tile_data:
                     raster = tile_to_raster(tile_data, bounds)
                     if raster:
-                        sources.append(raster)
+                      with raster as r:
+                          sources.append(r)
                 else:
                     print(f" - Error extracting tile_data: tile_to_raster failed for {tile.x}, {tile.y}")
             if (i + 1) % 100 == 0:
@@ -164,7 +158,8 @@ def mbtiles_to_raster(mbtiles_path, zoom, selected_tiles=None):
             if tile_data:
                 raster = tile_to_raster(tile_data, bounds)
                 if raster:
-                    sources.append(raster)
+                  with raster as r:
+                    sources.append(r)
             else:
                 print(f" - Error extracting tile_data: tile_to_raster failed for {tile.x}, {tile.y}")
             if (i + 1) % 100 == 0:
