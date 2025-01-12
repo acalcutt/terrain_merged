@@ -121,7 +121,7 @@ def _create_png_from_tile_wrapper(kwargs):
   """Wraps the create png function to be used with multiprocessing"""
   create_png_from_tile(**kwargs)
 
-def create_png_from_tile(mbtiles_path1, mbtiles_path2, output_dir, zoom, tile, resampling, encoding):
+def create_png_from_tile(mbtiles_path1, mbtiles_path2, output_mbtiles_path, zoom, tile, resampling, encoding):
     """Extracts a tile and saves it as a png."""
     tile_x, tile_y = tile.x, tile.y
     bounds = get_tile_bounds(tile)
@@ -174,25 +174,45 @@ def create_png_from_tile(mbtiles_path1, mbtiles_path2, output_dir, zoom, tile, r
                 mask = np.vectorize(should_exclude)(data2[0],data2[1],data2[2])
                 data2 = np.where(mask, data1, data2) # the overlay is done here.
             data2 = data_to_rgb(data2[0], encoding, 0, 10)
-            output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.png")
-            Image.fromarray(np.moveaxis(data2, 0, -1)).save(output_path)
-            print(f" - Created {output_path}")
+            
+            conn = sqlite3.connect(output_mbtiles_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO tiles VALUES (?, ?, ?, ?)",
+                (tile.z, tile.x, tile.y, sqlite3.Binary(np.moveaxis(data2, 0, -1).tobytes()))
+            )
+            conn.commit()
+            conn.close()
+            print(f" - Created tile {tile.z} {tile.x} {tile.y}")
+
         else:
           data1 = data_to_rgb(data1[0], encoding, 0, 10)
-          output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.png")
-          Image.fromarray(np.moveaxis(data1, 0, -1)).save(output_path)
-          print(f" - Created {output_path}")
+          conn = sqlite3.connect(output_mbtiles_path)
+          cursor = conn.cursor()
+          cursor.execute(
+                "INSERT INTO tiles VALUES (?, ?, ?, ?)",
+                (tile.z, tile.x, tile.y, sqlite3.Binary(np.moveaxis(data1, 0, -1).tobytes()))
+            )
+          conn.commit()
+          conn.close()
+          print(f" - Created tile {tile.z} {tile.x} {tile.y}")
     else:
         tile_data2, source_zoom2 = extract_tile_data(mbtiles_path2, zoom, tile_x, tile_y)
         if tile_data2:
-          data2, tile_meta = _tile_to_raster(tile_data2, bounds)
-          if data2.shape[0] == 3:
-            mask = np.vectorize(should_exclude)(data2[0],data2[1],data2[2])
-            data2 = np.where(mask, np.nan, data2)
-          data2 = data_to_rgb(data2[0], encoding, 0, 10)
-          output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.png")
-          Image.fromarray(np.moveaxis(data2, 0, -1)).save(output_path)
-          print(f" - Created {output_path}")
+            data2, tile_meta = _tile_to_raster(tile_data2, bounds)
+            if data2.shape[0] == 3:
+              mask = np.vectorize(should_exclude)(data2[0],data2[1],data2[2])
+              data2 = np.where(mask, np.nan, data2)
+            data2 = data_to_rgb(data2[0], encoding, 0, 10)
+            conn = sqlite3.connect(output_mbtiles_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO tiles VALUES (?, ?, ?, ?)",
+                (tile.z, tile.x, tile.y, sqlite3.Binary(np.moveaxis(data2, 0, -1).tobytes()))
+            )
+            conn.commit()
+            conn.close()
+            print(f" - Created tile {tile.z} {tile.x} {tile.y}")
         else:
             print(f" - Error extracting tile {tile.x}, {tile.y} from either source, skipping tile")
 
@@ -244,6 +264,9 @@ def data_to_rgb(data, encoding, baseval, interval, round_digits=0):
     data encoded
   """
   data = data.astype(np.float64)
+  
+  # Mask out all nan values before encoding
+  data = np.nan_to_num(data, nan=0)
 
   if(encoding == "terrarium"):
     data += 32768
@@ -298,14 +321,11 @@ def get_max_zoom_level(mbtiles_path):
 if __name__ == "__main__":
     mbtiles_path1 = "/opt/JAXA_AW3D30_2024_terrainrgb_z0-Z12_webp.mbtiles"  # Path to the first MBTiles file
     mbtiles_path2 = "/opt/swissALTI3D_2024_terrainrgb_z0-Z16.mbtiles"  # Path to the second MBTiles file
-    output_png_dir = "/opt/output_pngs"  # Output directory for PNGs
+    output_mbtiles_path = "/opt/output.mbtiles"  # Output path for mbtiles
     resampling_option = Resampling.lanczos
     processes = multiprocessing.cpu_count()
-    encoding_option = "terrarium" # encoding type (terrarium or other). terrarium is the default
-
-    # Create the output directory if it doesn't exist
-    os.makedirs(output_png_dir, exist_ok=True)
-
+    encoding_option = "mapbox"  # encoding type (terrarium or other)
+    
     # Determine the max zoom
     max_zoom = get_max_zoom_level(mbtiles_path2)
     print(f"Max zoom of mbtiles file: {max_zoom}")
@@ -313,25 +333,37 @@ if __name__ == "__main__":
     # Loop through all zoom levels
     min_zoom = 0
     for zoom in range(min_zoom, max_zoom + 1):
-        print(f"Starting PNG extraction for zoom: {zoom}")
-    
+        print(f"Starting MBTiles creation for zoom: {zoom}")
+        
         selected_tiles = get_tiles_from_mbtiles(mbtiles_path2, zoom)
         print(f"Processing {len(selected_tiles)} tiles")
+        
+        
+        # Check if the 'tiles' table exists
+        conn = sqlite3.connect(output_mbtiles_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tiles';")
+        table_exists = cursor.fetchone()
 
+        if not table_exists and zoom == 0:
+          # Create the 'tiles' table only if it doesn't exist
+          cursor.execute("CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);")
+          conn.commit()
+        conn.close()    
         tile_params = ({
                 "mbtiles_path1": mbtiles_path1,
                 "mbtiles_path2": mbtiles_path2,
-                "output_dir": output_png_dir,
+                "output_mbtiles_path": output_mbtiles_path,
                 "zoom": zoom,
                 "tile": tile,
                 "resampling": resampling_option,
                 "encoding": encoding_option
             } for tile in selected_tiles)
-        
+            
         with multiprocessing.Pool(processes=processes) as pool:
            for _ in pool.imap(_create_png_from_tile_wrapper, tile_params):
             pass
         
-        print(f"Finished PNG creation for zoom level {zoom}")
+        print(f"Finished MBTiles creation for zoom level {zoom}")
 
-    print("Finished PNG creation")
+    print("Finished MBTiles creation")
