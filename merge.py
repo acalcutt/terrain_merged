@@ -17,353 +17,436 @@ import multiprocessing
 import itertools
 import gc
 import os
+from pathlib import Path
+import logging
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional, Tuple, List
+from contextlib import contextmanager
 
-def should_exclude(r,g,b):
-  """returns true if the r,g,b value indicates the tile should be excluded"""
-  if r == 1 and g == 134 and b == 160:
-    return True
-  if r == 1 and g == 134 and b == 150:
-    return True
+class EncodingType(Enum):
+    MAPBOX = "mapbox"
+    TERRARIUM = "terrarium"
+
+@dataclass
+class MBTilesSource:
+    """Configuration for an MBTiles source file"""
+    path: Path
+    encoding: EncodingType
+
+@dataclass
+class ProcessTileArgs:
+    """Arguments for parallel tile processing"""
+    tile: mercantile.Tile
+    primary_source: MBTilesSource
+    secondary_source: MBTilesSource
+    output_path: Path
+    output_encoding: EncodingType
+    resampling: int
+
+@dataclass
+class TileData:
+    """Container for decoded tile data"""
+    data: np.ndarray
+    meta: dict
+    source_zoom: int
+
+class TerrainRGBMerger:
+    def __init__(
+        self,
+        primary_source: MBTilesSource,
+        secondary_source: MBTilesSource,
+        output_path: Path,
+        output_encoding: EncodingType = EncodingType.MAPBOX,
+        resampling: int = Resampling.lanczos,
+        processes: Optional[int] = None,
+        default_tile_size: int = 512
+    ):
+        self.primary_source = primary_source
+        self.secondary_source = secondary_source
+        self.output_path = Path(output_path)
+        self.output_encoding = output_encoding
+        self.resampling = resampling
+        self.processes = processes or multiprocessing.cpu_count()
+        self.logger = logging.getLogger(__name__)
+        self.default_tile_size = default_tile_size
+
+    @contextmanager
+    def _db_connection(self, db_path: Path):
+        """Context manager for database connections"""
+        conn = sqlite3.connect(db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def _should_exclude(self, r, g, b, encoding: EncodingType):
+      """returns true if the r,g,b value indicates the tile should be excluded for the given encoding"""
+      if encoding == EncodingType.MAPBOX:
+          if r == 1 and g == 134 and b == 160:
+              return True
+          if r == 1 and g == 134 and b == 150:
+              return True
+      elif encoding == EncodingType.TERRARIUM:
+          if r == 128 and g == 0 and b == 0:
+              return True
+          if r == 127 and g == 255 and b == 0:
+              return True
+      return False
     
-  return False
+    def _decode_elevation(self, rgb: np.ndarray, encoding: EncodingType) -> np.ndarray:
+        """
+        Decode RGB values to elevation data based on specified encoding format.
+        """
+        r, g, b = rgb[0], rgb[1], rgb[2]
 
-def decode_terrainrgb(image_data, debug=False):
-    """Decodes terrain rgb data into elevation data"""
-    try:
-        if not image_data:
-            if debug:
-                print(" - Error decoding terrain rgb: image_data was None")
-            return None, None, None
-        if not isinstance(image_data, bytes) or len(image_data) == 0:
-            if debug:
-                print(" - Error decoding terrain rgb: image_data is not valid bytes")
-            return None, None, None
-
-        # Convert the image to a png using Pillow
-        image = Image.open(io.BytesIO(image_data))
-        image_png = io.BytesIO()
-
-        # Force to RGB (to ensure it's not paletted or other weirdness)
-        image = image.convert('RGB')
-        # Force output to an 8-bit PNG
-        image.save(image_png, format='PNG', bits=8)
-        image_png.seek(0)
-
-        if debug:
-            print(f" - image_png size: {len(image_png.getvalue())}")
-
-        with rasterio.open(image_png, driver='PNG') as dataset:
-            rgb = dataset.read(masked = False).astype(np.int32)
-            if rgb.shape[0] != 3:
-                if debug:
-                    print(f" - Error decoding terrain rgb: Expected 3 bands, got {rgb.shape[0]}")
-                return None, None, None
-            r, g, b = rgb[0], rgb[1], rgb[2]
-            if debug:
-                print(f"RGB values: R min={np.min(r)}, max={np.max(r)}, G min={np.min(g)}, max={np.max(g)}, B min={np.min(b)}, max={np.max(b)}")
-            try:
-                elevation = -10000 + ((r * 256 * 256 + g * 256 + b) * 0.1)
-                mask = np.vectorize(should_exclude)(r,g,b)
-                elevation = np.where(mask, np.nan, elevation)
-                if debug:
-                    print(f" - Elevation min={np.nanmin(elevation)} max={np.nanmax(elevation)}")
-            except Exception as e:
-                if debug:
-                    print(f" - Error decoding terrain rgb (elevation): {e}")
-                return None, None, None
-
-            # create the new meta data for our single band elevation array
-            kwargs = dataset.meta.copy()
-            kwargs.update({
-                "count": 1,
-                "dtype": rasterio.float32,
-                "driver": "GTiff",
-                "crs": "EPSG:3857" # Setting the CRS here
-            })
+        if encoding == EncodingType.TERRARIUM:
+            # Terrarium encoding: (red * 256 + green + blue / 256) - 32768
+            elevation = (r * 256 + g + b / 256) - 32768
+        else:
+            # Mapbox encoding: -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)
+            elevation = -10000 + ((r * 256 * 256 + g * 256 + b) * 0.1)
         
-        return np.expand_dims(elevation, axis=0), kwargs, dataset.meta
+        # Create mask for invalid/no-data values
+        mask = np.vectorize(self._should_exclude)(r, g, b, encoding)
+       
+        return np.where(mask, np.nan, elevation)
 
-    except Exception as e:
-        if debug:
-            print(f" - Error decoding terrain rgb: {e}")
-        return None, None, None
 
-def extract_tile_data(mbtiles_path, zoom, tile_x, tile_y):
-    """Extract a tile from MBTiles as bytes, with upscaling logic."""
-    conn = sqlite3.connect(mbtiles_path)
-    cursor = conn.cursor()
-    
-    current_zoom = zoom
+    def _encode_elevation(self, elevation: np.ndarray) -> np.ndarray:
+        """
+        Encode elevation data to RGB values using output encoding format
+        """
+        # Reshape the elevation array to ensure it's 2D
+        if elevation.ndim > 2:
+          elevation = elevation[0]
 
-    while current_zoom >= 0:
-        cursor.execute(
-            "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-            (current_zoom, tile_x, tile_y),
+        # Replace NaN with 0 before encoding to avoid errors
+        elevation = np.nan_to_num(elevation, nan=0)
+
+        rows, cols = elevation.shape
+        rgb = np.zeros((3, rows, cols), dtype=np.uint8)
+
+        if self.output_encoding == EncodingType.TERRARIUM:
+            # Clip elevation to valid range for Terrarium encoding
+            elevation = np.clip(elevation, -32768, 32767)
+            scaled = elevation + 32768
+
+            # Calculate RGB values
+            rgb[0] = np.floor(scaled / 256)          # Red
+            rgb[1] = np.floor(scaled % 256)          # Green
+            rgb[2] = np.floor((scaled - np.floor(scaled)) * 256)  # Blue
+        else:
+            # Mapbox encoding
+            elevation = np.clip(elevation, -10000, 8900)
+            scaled = (elevation + 10000) / 0.1
+            
+            rgb[0] = (scaled // (256 * 256)) % 256
+            rgb[1] = (scaled // 256) % 256
+            rgb[2] = scaled % 256
+            
+        return rgb
+
+    def _decode_tile(self, tile_data: bytes, tile: mercantile.Tile, encoding: EncodingType) -> Tuple[Optional[np.ndarray], dict]:
+        """Decode tile data using specified encoding format"""
+        if not isinstance(tile_data, bytes) or len(tile_data) == 0:
+            raise ValueError("Invalid tile data")
+            
+        try:
+            # Convert the image to a PNG using Pillow
+            image = Image.open(io.BytesIO(tile_data))
+            image = image.convert('RGB')  # Force to RGB
+            image_png = io.BytesIO()
+            image.save(image_png, format='PNG', bits=8)
+            image_png.seek(0)
+
+            with rasterio.open(image_png) as dataset:
+                rgb = dataset.read(masked=False).astype(np.int32)
+                
+                # Add debug log to confirm the shape and data of `rgb`
+                self.logger.debug(f"Decoded tile RGB shape: {rgb.shape}, dtype: {rgb.dtype}")
+                
+                if rgb.ndim != 3 or rgb.shape[0] != 3:
+                    self.logger.error(f"Unexpected RGB shape in tile {tile.z}/{tile.x}/{tile.y}: {rgb.shape}")
+                    return None, {}
+
+                elevation = self._decode_elevation(rgb, encoding)
+
+                bounds = mercantile.bounds(tile)
+                meta = dataset.meta.copy()
+                meta.update({
+                    'count': 1,
+                    'dtype': rasterio.float32,
+                    'driver': 'GTiff',
+                    'crs': 'EPSG:3857',
+                    'transform': rasterio.transform.from_bounds(
+                        bounds.west, bounds.south, bounds.east, bounds.north,
+                        meta['width'], meta['height']
+                    )
+                })
+                
+                self.logger.debug(f"Decoded elevation: min={np.nanmin(elevation)}, max={np.nanmax(elevation)}")
+                return elevation, meta
+        except Exception as e:
+            self.logger.error(f"Failed to decode tile data, returning None, None: {e}")
+            return None, {}
+
+          
+
+    def _extract_tile(self, source: MBTilesSource, zoom: int, x: int, y: int) -> Optional[TileData]:
+        """Extract and decode a tile, with fallback to parent tiles"""
+        current_zoom = zoom
+        current_x, current_y = x, y
+
+        while current_zoom >= 0:
+            with self._db_connection(source.path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                    (current_zoom, current_x, current_y)
+                )
+                result = cursor.fetchone()
+
+                if result:
+                    try:
+                        data, meta = self._decode_tile(result[0], mercantile.Tile(current_x, current_y, current_zoom), source.encoding)
+                        if data is None:
+                            return None
+                        if data.size == 0:
+                            return None
+                        return TileData(data, meta, current_zoom)
+                    except Exception as e:
+                        self.logger.error(f"Failed to decode tile {current_zoom}/{current_x}/{current_y}: {e}")
+                        return None
+            
+            if current_zoom > 0:
+                current_x //= 2
+                current_y //= 2
+            current_zoom -= 1
+        
+        return None
+
+    def _merge_tiles(self, primary: Optional[TileData], secondary: Optional[TileData], target_tile: mercantile.Tile) -> Optional[np.ndarray]:
+        """Merge two tiles, handling upscaling and priorities"""
+        if primary is None and secondary is None:
+            return None
+
+        bounds = mercantile.bounds(target_tile)
+        
+        # Use the tile size of the primary tile, or the default if no primary tile
+        tile_size = self.default_tile_size
+        if primary is not None and 'width' in primary.meta and 'height' in primary.meta:
+            tile_size = primary.meta['width']
+
+        target_transform = rasterio.transform.from_bounds(
+            bounds.west, bounds.south, bounds.east, bounds.north,
+            tile_size, tile_size  # Use determined tile size
         )
-        result = cursor.fetchone()
-        if result:
-            conn.close()
-            return result[0], current_zoom  # Return found tile data and zoom
-        
-        # Calculate parent tile coordinates
-        if current_zoom > 0:
-            tile_x //= 2
-            tile_y //= 2
-        current_zoom -= 1
-    
-    conn.close()
-    return None, None  # No tile found at any level
 
-def get_tile_bounds(tile):
-  return mercantile.bounds(tile)
+        result = None
 
-def _create_png_from_tile_wrapper(kwargs):
-  """Wraps the create png function to be used with multiprocessing"""
-  create_png_from_tile(**kwargs)
+        # Process primary tile if available
+        if primary is not None:
+            result = self._resample_if_needed(primary, target_tile, target_transform, tile_size)
 
-def create_png_from_tile(mbtiles_path1, mbtiles_path2, output_mbtiles_path, zoom, tile, resampling, encoding):
-    """Extracts a tile and saves it as a png."""
-    tile_x, tile_y = tile.x, tile.y
-    bounds = get_tile_bounds(tile)
-    
-    tile_data1, source_zoom1 = extract_tile_data(mbtiles_path1, zoom, tile_x, tile_y)
-    
-    if tile_data1:
-        data1, tile_meta = _tile_to_raster(tile_data1, bounds)
-        if source_zoom1 != zoom:
-            # calculate the new transform based on the target tile
-            transform, width, height = calculate_default_transform(
-                tile_meta['crs'], tile_meta['crs'], 
-                tile_meta['width'], tile_meta['height'], 
-                *rasterio.transform.array_bounds(1, 1, tile_meta['transform']), 
-                resolution=(tile_meta['transform'][2] - tile_meta['transform'][0]) / tile_meta['width']
-            )
-            target_bounds = get_tile_bounds(tile)
-            target_transform = rasterio.transform.from_bounds(
-              target_bounds.west, target_bounds.south, target_bounds.east, target_bounds.north,
-              tile_meta['width'], tile_meta['height']
-            )
+        # Process and merge secondary tile if available
+        if secondary is not None:
+            secondary_data = self._resample_if_needed(secondary, target_tile, target_transform, tile_size)
+            if result is None:
+                result = secondary_data
+            else:
+                # Merge using secondary data where valid
+                mask = ~np.isnan(secondary_data)
+                result[mask] = secondary_data[mask]
+
+        return result
+
+    def _resample_if_needed(self, tile_data: TileData, target_tile: mercantile.Tile, target_transform, tile_size) -> np.ndarray:
+        """Resample tile data if source zoom differs from target"""
+        if tile_data.source_zoom != target_tile.z:
+            with rasterio.io.MemoryFile() as memfile:
+                with memfile.open(**tile_data.meta) as src:
+                    dst_data = np.zeros((1, tile_size, tile_size), dtype=np.float32)
+                    reproject(
+                        source=tile_data.data,
+                        destination=dst_data,
+                        src_transform=tile_data.meta['transform'],
+                        src_crs=tile_data.meta['crs'],
+                        dst_transform=target_transform,
+                        dst_crs=tile_data.meta['crs'],
+                        resampling=self.resampling
+                    )
+                    return dst_data[0]
+        return tile_data.data[0]
+
+    def process_tile(self, tile: mercantile.Tile) -> None:
+        """Process a single tile, merging data from both sources"""
+        try:
+            # Extract tiles from both sources
+            primary_data = self._extract_tile(self.primary_source, tile.z, tile.x, tile.y)
+            secondary_data = self._extract_tile(self.secondary_source, tile.z, tile.x, tile.y)
             
+            if primary_data is None and secondary_data is None:
+                self.logger.debug(f"No data found for tile {tile.z}/{tile.x}/{tile.y}")
+                return
             
-            kwargs = tile_meta.copy()
-            kwargs.update({
-                  "transform": target_transform,
-                  "width": tile_meta['width'],
-                  "height": tile_meta['height'],
-            })
-              
-            # Create reprojected raster
-            out_memfile = rasterio.MemoryFile()
-            with out_memfile.open(**kwargs) as dst:
-              reproject(
-                source=data1,
-                destination=rasterio.band(dst, 1),
-                src_transform=tile_meta['transform'],
-                src_crs=tile_meta['crs'],
-                dst_transform=target_transform,
-                dst_crs=tile_meta['crs'],
-                resampling=resampling,
-              )
-            data1 = out_memfile.read()
-            tile_meta = kwargs
-        
-        tile_data2, source_zoom2 = extract_tile_data(mbtiles_path2, zoom, tile_x, tile_y)
-        if tile_data2:
-            data2, _ = _tile_to_raster(tile_data2, bounds)
-            if data2.shape[0] == 3:
-                mask = np.vectorize(should_exclude)(data2[0],data2[1],data2[2])
-                data2 = np.where(mask, data1, data2) # the overlay is done here.
-            data2 = data_to_rgb(data2[0], encoding, 0, 10)
+            # Merge the elevation data
+            merged_elevation = self._merge_tiles(primary_data, secondary_data, tile)
             
-            conn = sqlite3.connect(output_mbtiles_path)
+            if merged_elevation is not None:
+                # Encode using output format and save
+                rgb_data = self._encode_elevation(merged_elevation)
+                self._save_tile(tile, rgb_data)
+                self.logger.info(f"Successfully processed tile {tile.z}/{tile.x}/{tile.y}")
+        except Exception as e:
+            self.logger.error(f"Error processing tile {tile.z}/{tile.x}/{tile.y}: {e}")
+            raise
+
+    def _save_tile(self, tile: mercantile.Tile, rgb_data: np.ndarray) -> None:
+        """Save processed tile to output MBTiles"""
+        with self._db_connection(self.output_path) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO tiles VALUES (?, ?, ?, ?)",
-                (tile.z, tile.x, tile.y, sqlite3.Binary(np.moveaxis(data2, 0, -1).tobytes()))
-            )
+
+            # Ensure table exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tiles (
+                    zoom_level INTEGER,
+                    tile_column INTEGER,
+                    tile_row INTEGER,
+                    tile_data BLOB,
+                    PRIMARY KEY (zoom_level, tile_column, tile_row)
+                )
+            """)
+            
+            if rgb_data.ndim == 3:
+               
+                cursor.execute(
+                    "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                    (tile.z, tile.x, tile.y, sqlite3.Binary(np.moveaxis(rgb_data, 0, -1).tobytes()))
+                )
+            else:
+                
+                cursor.execute(
+                    "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                    (tile.z, tile.x, tile.y, sqlite3.Binary(np.zeros((3,rgb_data.shape[0],rgb_data.shape[1]), dtype=np.uint8).tobytes()))
+                )
+                
             conn.commit()
-            conn.close()
-            print(f" - Created tile {tile.z} {tile.x} {tile.y}")
 
-        else:
-          data1 = data_to_rgb(data1[0], encoding, 0, 10)
-          conn = sqlite3.connect(output_mbtiles_path)
-          cursor = conn.cursor()
-          cursor.execute(
-                "INSERT INTO tiles VALUES (?, ?, ?, ?)",
-                (tile.z, tile.x, tile.y, sqlite3.Binary(np.moveaxis(data1, 0, -1).tobytes()))
-            )
-          conn.commit()
-          conn.close()
-          print(f" - Created tile {tile.z} {tile.x} {tile.y}")
-    else:
-        tile_data2, source_zoom2 = extract_tile_data(mbtiles_path2, zoom, tile_x, tile_y)
-        if tile_data2:
-            data2, tile_meta = _tile_to_raster(tile_data2, bounds)
-            if data2.shape[0] == 3:
-              mask = np.vectorize(should_exclude)(data2[0],data2[1],data2[2])
-              data2 = np.where(mask, np.nan, data2)
-            data2 = data_to_rgb(data2[0], encoding, 0, 10)
-            conn = sqlite3.connect(output_mbtiles_path)
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO tiles VALUES (?, ?, ?, ?)",
-                (tile.z, tile.x, tile.y, sqlite3.Binary(np.moveaxis(data2, 0, -1).tobytes()))
-            )
-            conn.commit()
-            conn.close()
-            print(f" - Created tile {tile.z} {tile.x} {tile.y}")
-        else:
-            print(f" - Error extracting tile {tile.x}, {tile.y} from either source, skipping tile")
+    def _get_tiles_for_zoom(self, zoom: int) -> List[mercantile.Tile]:
+        """Get list of tiles to process for a given zoom level"""
+        tiles = set()
 
-def _tile_to_raster(tile_data, bounds):
-    """Converts a tile to a rasterio raster object and its metadata."""
-    if not tile_data:
-        print(" - Error converting tile to raster: tile_data is None")
-        return None, None
+        # Get tiles from both sources
+        for source in [self.primary_source, self.secondary_source]:
+            with self._db_connection(source.path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT DISTINCT tile_column, tile_row FROM tiles WHERE zoom_level = ?',
+                    (zoom,)
+                )
+                rows = cursor.fetchall()
+
+                if not rows:
+                    self.logger.warning(f"No tiles found for zoom level {zoom} in source {source.path}")
+                else:
+                    self.logger.debug(f"Rows fetched for zoom level {zoom}: {rows}")
+                    
+                # Ensure we're unpacking valid (x, y) pairs
+                for row in rows:
+                    if isinstance(row, tuple) and len(row) == 2:
+                        x, y = row
+                        tiles.add(mercantile.Tile(x=x, y=y, z=zoom))
+                    else:
+                        self.logger.warning(f"Skipping invalid row: {row}")
         
-    elevation, elevation_meta, base_meta = decode_terrainrgb(tile_data, debug=False)
-    if elevation is None or elevation_meta is None:
-        print(" - Error converting tile to raster: could not decode tile_data")
-        return None, None
+        return list(tiles)
 
-    kwargs = elevation_meta.copy()
-    kwargs.update({
-        'transform': rasterio.transform.from_bounds(
-        bounds.west, bounds.south, bounds.east, bounds.north, 
-        elevation_meta['width'], elevation_meta['height']
-        ),
-        "driver": "GTiff"
-    })
-        
-    # Return the numpy array and metadata instead of the raster object
-    return elevation, kwargs
+    @staticmethod
+    def _process_tile_wrapper(args: ProcessTileArgs) -> None:
+        """Static wrapper method for parallel tile processing"""
+        try:
+            merger = TerrainRGBMerger(
+                primary_source=args.primary_source,
+                secondary_source=args.secondary_source,
+                output_path=args.output_path,
+                output_encoding=args.output_encoding,
+                resampling=args.resampling,
+                 processes=1,
+                 default_tile_size=512
+            )
+            merger.process_tile(args.tile)
+        except Exception as e:
+            logging.error(f"Error processing tile {args.tile}: {e}")
 
-def data_to_rgb(data, encoding, baseval, interval, round_digits=0):
-  """
-  Given an arbitrary (rows x cols) ndarray,
-  encode the data into uint8 RGB from an arbitrary
-  base and interval
+    def process_zoom_level(self, zoom: int):
+      """Process all tiles for a given zoom level in parallel"""
+      self.logger.info(f"Processing zoom level {zoom}")
+      
+      # Get list of tiles to process
+      tiles = self._get_tiles_for_zoom(zoom)
+      self.logger.info(f"Found {len(tiles)} tiles to process")
+      
+      # Prepare arguments for parallel processing
+      process_args = [
+          ProcessTileArgs(
+              tile=tile,
+              primary_source=self.primary_source,
+              secondary_source=self.secondary_source,
+              output_path=self.output_path,
+              output_encoding=self.output_encoding,
+              resampling=self.resampling
+          )
+          for tile in tiles
+      ]
+      
+      # Process tiles in parallel
+      with multiprocessing.Pool(self.processes) as pool:
+          for _ in pool.imap_unordered(self._process_tile_wrapper, process_args):
+              pass
 
-  Parameters
-  -----------
-  data: ndarray
-    (rows x cols) ndarray of data to encode
-  baseval: float
-    the base value of the RGB numbering system.
-    will be treated as zero for this encoding
-  interval: float
-    the interval at which to encode
-  round_digits: int
-    erased less significant digits
+    def get_max_zoom_level(self) -> int:
+        """Get the maximum zoom level from both sources"""
+        max_zoom = 0
+        for source in [self.primary_source, self.secondary_source]:
+            with self._db_connection(source.path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT MAX(zoom_level) FROM tiles")
+                result = cursor.fetchone()
+                if result[0] is not None:
+                    max_zoom = max(max_zoom, result[0])
+        return max_zoom
 
-  Returns
-  --------
-  ndarray: rgb data
-    a uint8 (3 x rows x cols) ndarray with the
-    data encoded
-  """
-  data = data.astype(np.float64)
-  
-  # Mask out all nan values before encoding
-  data = np.nan_to_num(data, nan=0)
+    def process_all(self, min_zoom: int = 0):
+        """Process all zoom levels from min_zoom to max available"""
+        max_zoom = self.get_max_zoom_level()
+        self.logger.info(f"Processing zoom levels {min_zoom} to {max_zoom}")
 
-  if(encoding == "terrarium"):
-    data += 32768
-  else:
-    data -= baseval
-    data /= interval
+        for zoom in range(min_zoom, max_zoom + 1):
+            self.process_zoom_level(zoom)
 
-  data = np.around(data / 2**round_digits) * 2**round_digits
-
-  rows, cols = data.shape
-
-  datarange = data.max() - data.min()
-
-  if _range_check(datarange):
-    raise ValueError("Data of {} larger than 256 ** 3".format(datarange))
-
-  rgb = np.zeros((3, rows, cols), dtype=np.uint8)
-
-  if(encoding == "terrarium"):
-    rgb[0] = data // 256 // 256
-    rgb[1] = np.floor((data // 256) % 256)
-    rgb[2] = np.floor(data % 256)
-  else:
-    rgb[0] = ((((data // 256) // 256) / 256) - (((data // 256) // 256) // 256)) * 256
-    rgb[1] = (((data // 256) / 256) - ((data // 256) // 256)) * 256
-    rgb[2] = ((data / 256) - (data // 256)) * 256
-
-  return rgb
-
-def _range_check(datarange):
-  return datarange >= 16777216
-
-def get_tiles_from_mbtiles(mbtiles_path, zoom):
-    """Extracts tile coordinates from MBTiles."""
-    conn = sqlite3.connect(mbtiles_path)
-    cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT tile_column, tile_row FROM tiles WHERE zoom_level = ?', (zoom,))
-    results = cursor.fetchall()
-    conn.close()
-    return [mercantile.Tile(x=tile_x, y=tile_y, z=zoom) for (tile_x, tile_y) in results]
-
-def get_max_zoom_level(mbtiles_path):
-    """Determines the maximum zoom level in an MBTiles database."""
-    conn = sqlite3.connect(mbtiles_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT MAX(zoom_level) FROM tiles")
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result[0] is not None else 0 # if nothing is found, default to 0
-
+        self.logger.info("Completed processing all zoom levels")
 
 if __name__ == "__main__":
-    mbtiles_path1 = "/opt/JAXA_AW3D30_2024_terrainrgb_z0-Z12_webp.mbtiles"  # Path to the first MBTiles file
-    mbtiles_path2 = "/opt/swissALTI3D_2024_terrainrgb_z0-Z16.mbtiles"  # Path to the second MBTiles file
-    output_mbtiles_path = "/opt/output.mbtiles"  # Output path for mbtiles
-    resampling_option = Resampling.lanczos
-    processes = multiprocessing.cpu_count()
-    encoding_option = "mapbox"  # encoding type (terrarium or other)
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     
-    # Determine the max zoom
-    max_zoom = get_max_zoom_level(mbtiles_path2)
-    print(f"Max zoom of mbtiles file: {max_zoom}")
-
-    # Loop through all zoom levels
-    min_zoom = 0
-    for zoom in range(min_zoom, max_zoom + 1):
-        print(f"Starting MBTiles creation for zoom: {zoom}")
-        
-        selected_tiles = get_tiles_from_mbtiles(mbtiles_path2, zoom)
-        print(f"Processing {len(selected_tiles)} tiles")
-        
-        
-        # Check if the 'tiles' table exists
-        conn = sqlite3.connect(output_mbtiles_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tiles';")
-        table_exists = cursor.fetchone()
-
-        if not table_exists and zoom == 0:
-          # Create the 'tiles' table only if it doesn't exist
-          cursor.execute("CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);")
-          conn.commit()
-        conn.close()    
-        tile_params = ({
-                "mbtiles_path1": mbtiles_path1,
-                "mbtiles_path2": mbtiles_path2,
-                "output_mbtiles_path": output_mbtiles_path,
-                "zoom": zoom,
-                "tile": tile,
-                "resampling": resampling_option,
-                "encoding": encoding_option
-            } for tile in selected_tiles)
-            
-        with multiprocessing.Pool(processes=processes) as pool:
-           for _ in pool.imap(_create_png_from_tile_wrapper, tile_params):
-            pass
-        
-        print(f"Finished MBTiles creation for zoom level {zoom}")
-
-    print("Finished MBTiles creation")
+    merger = TerrainRGBMerger(
+        primary_source=MBTilesSource(
+            path=Path("/opt/JAXA_AW3D30_2024_terrainrgb_z0-Z12_webp.mbtiles"),
+            encoding=EncodingType.MAPBOX
+        ),
+        secondary_source=MBTilesSource(
+            path=Path("/opt/swissALTI3D_2024_terrainrgb_z0-Z16.mbtiles"),
+            encoding=EncodingType.MAPBOX
+        ),
+        output_path=Path("/opt/output.mbtiles"),
+        output_encoding=EncodingType.MAPBOX,
+        default_tile_size = 512,
+        resampling = Resampling.bilinear
+    )
+    
+    merger.process_all()
