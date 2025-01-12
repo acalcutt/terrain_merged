@@ -117,12 +117,12 @@ def extract_tile_data(mbtiles_path, zoom, tile_x, tile_y):
 def get_tile_bounds(tile):
   return mercantile.bounds(tile)
 
-def _create_geotiff_from_tile_wrapper(kwargs):
-  """Wraps the create geotiff function to be used with multiprocessing"""
-  create_geotiff_from_tile(**kwargs)
+def _create_png_from_tile_wrapper(kwargs):
+  """Wraps the create png function to be used with multiprocessing"""
+  create_png_from_tile(**kwargs)
 
-def create_geotiff_from_tile(mbtiles_path1, mbtiles_path2, output_dir, zoom, tile, resampling):
-    """Extracts a tile and saves it as a GeoTIFF."""
+def create_png_from_tile(mbtiles_path1, mbtiles_path2, output_dir, zoom, tile, resampling, encoding):
+    """Extracts a tile and saves it as a png."""
     tile_x, tile_y = tile.x, tile.y
     bounds = get_tile_bounds(tile)
     
@@ -173,14 +173,14 @@ def create_geotiff_from_tile(mbtiles_path1, mbtiles_path2, output_dir, zoom, til
             if data2.shape[0] == 3:
                 mask = np.vectorize(should_exclude)(data2[0],data2[1],data2[2])
                 data2 = np.where(mask, data1, data2) # the overlay is done here.
-            output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.tif")
-            with rasterio.open(output_path, 'w', **tile_meta) as dst:
-                dst.write(data2)
+            data2 = data_to_rgb(data2[0], encoding, 0, 10)
+            output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.png")
+            Image.fromarray(np.moveaxis(data2, 0, -1)).save(output_path)
             print(f" - Created {output_path}")
         else:
-          output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.tif")
-          with rasterio.open(output_path, 'w', **tile_meta) as dst:
-              dst.write(data1)
+          data1 = data_to_rgb(data1[0], encoding, 0, 10)
+          output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.png")
+          Image.fromarray(np.moveaxis(data1, 0, -1)).save(output_path)
           print(f" - Created {output_path}")
     else:
         tile_data2, source_zoom2 = extract_tile_data(mbtiles_path2, zoom, tile_x, tile_y)
@@ -189,9 +189,9 @@ def create_geotiff_from_tile(mbtiles_path1, mbtiles_path2, output_dir, zoom, til
           if data2.shape[0] == 3:
             mask = np.vectorize(should_exclude)(data2[0],data2[1],data2[2])
             data2 = np.where(mask, np.nan, data2)
-          output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.tif")
-          with rasterio.open(output_path, 'w', **tile_meta) as dst:
-            dst.write(data2)
+          data2 = data_to_rgb(data2[0], encoding, 0, 10)
+          output_path = os.path.join(output_dir, f"tile_{tile.z}_{tile.x}_{tile.y}.png")
+          Image.fromarray(np.moveaxis(data2, 0, -1)).save(output_path)
           print(f" - Created {output_path}")
         else:
             print(f" - Error extracting tile {tile.x}, {tile.y} from either source, skipping tile")
@@ -219,6 +219,62 @@ def _tile_to_raster(tile_data, bounds):
     # Return the numpy array and metadata instead of the raster object
     return elevation, kwargs
 
+def data_to_rgb(data, encoding, baseval, interval, round_digits=0):
+  """
+  Given an arbitrary (rows x cols) ndarray,
+  encode the data into uint8 RGB from an arbitrary
+  base and interval
+
+  Parameters
+  -----------
+  data: ndarray
+    (rows x cols) ndarray of data to encode
+  baseval: float
+    the base value of the RGB numbering system.
+    will be treated as zero for this encoding
+  interval: float
+    the interval at which to encode
+  round_digits: int
+    erased less significant digits
+
+  Returns
+  --------
+  ndarray: rgb data
+    a uint8 (3 x rows x cols) ndarray with the
+    data encoded
+  """
+  data = data.astype(np.float64)
+
+  if(encoding == "terrarium"):
+    data += 32768
+  else:
+    data -= baseval
+    data /= interval
+
+  data = np.around(data / 2**round_digits) * 2**round_digits
+
+  rows, cols = data.shape
+
+  datarange = data.max() - data.min()
+
+  if _range_check(datarange):
+    raise ValueError("Data of {} larger than 256 ** 3".format(datarange))
+
+  rgb = np.zeros((3, rows, cols), dtype=np.uint8)
+
+  if(encoding == "terrarium"):
+    rgb[0] = data // 256 // 256
+    rgb[1] = np.floor((data // 256) % 256)
+    rgb[2] = np.floor(data % 256)
+  else:
+    rgb[0] = ((((data // 256) // 256) / 256) - (((data // 256) // 256) // 256)) * 256
+    rgb[1] = (((data // 256) / 256) - ((data // 256) // 256)) * 256
+    rgb[2] = ((data / 256) - (data // 256)) * 256
+
+  return rgb
+
+def _range_check(datarange):
+  return datarange >= 16777216
 
 def get_tiles_from_mbtiles(mbtiles_path, zoom):
     """Extracts tile coordinates from MBTiles."""
@@ -242,33 +298,40 @@ def get_max_zoom_level(mbtiles_path):
 if __name__ == "__main__":
     mbtiles_path1 = "/opt/JAXA_AW3D30_2024_terrainrgb_z0-Z12_webp.mbtiles"  # Path to the first MBTiles file
     mbtiles_path2 = "/opt/swissALTI3D_2024_terrainrgb_z0-Z16.mbtiles"  # Path to the second MBTiles file
-    output_geotiff_dir = "/opt/output_geotiffs"  # Output directory for GeoTIFFs
+    output_png_dir = "/opt/output_pngs"  # Output directory for PNGs
     resampling_option = Resampling.lanczos
     processes = multiprocessing.cpu_count()
+    encoding_option = "terrarium" # encoding type (terrarium or other). terrarium is the default
 
     # Create the output directory if it doesn't exist
-    os.makedirs(output_geotiff_dir, exist_ok=True)
+    os.makedirs(output_png_dir, exist_ok=True)
 
     # Determine the max zoom
     max_zoom = get_max_zoom_level(mbtiles_path2)
     print(f"Max zoom of mbtiles file: {max_zoom}")
-    
-    print(f"Starting GeoTIFF extraction for zoom: {max_zoom}")
-    
-    selected_tiles = get_tiles_from_mbtiles(mbtiles_path2, max_zoom)
-    print(f"Processing {len(selected_tiles)} tiles")
 
-    tile_params = ({
-            "mbtiles_path1": mbtiles_path1,
-            "mbtiles_path2": mbtiles_path2,
-            "output_dir": output_geotiff_dir,
-            "zoom": max_zoom,
-            "tile": tile,
-            "resampling": resampling_option
-        } for tile in selected_tiles)
+    # Loop through all zoom levels
+    min_zoom = 0
+    for zoom in range(min_zoom, max_zoom + 1):
+        print(f"Starting PNG extraction for zoom: {zoom}")
+    
+        selected_tiles = get_tiles_from_mbtiles(mbtiles_path2, zoom)
+        print(f"Processing {len(selected_tiles)} tiles")
+
+        tile_params = ({
+                "mbtiles_path1": mbtiles_path1,
+                "mbtiles_path2": mbtiles_path2,
+                "output_dir": output_png_dir,
+                "zoom": zoom,
+                "tile": tile,
+                "resampling": resampling_option,
+                "encoding": encoding_option
+            } for tile in selected_tiles)
         
-    with multiprocessing.Pool(processes=processes) as pool:
-        for _ in pool.imap(_create_geotiff_from_tile_wrapper, tile_params):
-          pass
+        with multiprocessing.Pool(processes=processes) as pool:
+           for _ in pool.imap(_create_png_from_tile_wrapper, tile_params):
+            pass
         
-    print("Finished GeoTIFF creation")
+        print(f"Finished PNG creation for zoom level {zoom}")
+
+    print("Finished PNG creation")
