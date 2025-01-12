@@ -301,37 +301,54 @@ class TerrainRGBMerger:
 
         return result
 
-    def _resample_if_needed(
-        self,
-        tile_data: TileData,
-        target_tile: mercantile.Tile,
-        target_transform,
-        tile_size,
-    ) -> np.ndarray:
+    def _resample_if_needed(self, tile_data: TileData, target_tile: mercantile.Tile, target_transform, tile_size) -> np.ndarray:
         """Resample tile data if source zoom differs from target"""
-        # print(f"_resample_if_needed called with tile_data: {tile_data}, target_tile: {target_tile}")
+        #print(f"_resample_if_needed called with tile_data: {tile_data}, target_tile: {target_tile}")
         if tile_data.source_zoom != target_tile.z:
-            with rasterio.io.MemoryFile() as memfile:
-                with memfile.open(**tile_data.meta) as src:
-                    dst_data = np.zeros((1, tile_size, tile_size), dtype=np.float32)
-                    reproject(
-                        source=tile_data.data,
-                        destination=dst_data,
-                        src_transform=tile_data.meta["transform"],
-                        src_crs=tile_data.meta["crs"],
-                        dst_transform=target_transform,
-                        dst_crs=tile_data.meta["crs"],
-                        resampling=self.resampling,
-                    )
 
-                    if dst_data.ndim == 3:
-                        return dst_data[0]
-                    else:
-                        return dst_data
+          source_tile = mercantile.Tile(x=target_tile.x // (2**(target_tile.z - tile_data.source_zoom)),
+                                        y=target_tile.y // (2**(target_tile.z - tile_data.source_zoom)),
+                                        z=tile_data.source_zoom
+                                        )
+          source_bounds = mercantile.bounds(source_tile)
+
+          
+          
+          x_offset = (target_tile.x % (2**(target_tile.z - tile_data.source_zoom)))
+          y_offset = (target_tile.y % (2**(target_tile.z - tile_data.source_zoom)))
+          
+          #Determine the sub region bounds.
+          sub_region_width = (source_bounds.east - source_bounds.west) / (2**(target_tile.z - tile_data.source_zoom))
+          sub_region_height = (source_bounds.north - source_bounds.south) / (2**(target_tile.z - tile_data.source_zoom))
+
+          sub_region_west = source_bounds.west + (x_offset * sub_region_width)
+          sub_region_south = source_bounds.south + (y_offset * sub_region_height)
+          sub_region_east = sub_region_west + sub_region_width
+          sub_region_north = sub_region_south + sub_region_height
+
+          sub_region_transform = rasterio.transform.from_bounds(sub_region_west, sub_region_south, sub_region_east, sub_region_north, tile_size, tile_size)
+          
+          with rasterio.io.MemoryFile() as memfile:
+            with memfile.open(**tile_data.meta) as src:
+              dst_data = np.zeros((1, tile_size, tile_size), dtype=np.float32)
+              reproject(
+                  source=tile_data.data,
+                  destination=dst_data,
+                  src_transform=tile_data.meta['transform'],
+                  src_crs=tile_data.meta['crs'],
+                  dst_transform=sub_region_transform,
+                  dst_crs=tile_data.meta['crs'],
+                  resampling=self.resampling
+              )
+
+              if dst_data.ndim == 3:
+                  return dst_data[0]
+              else:
+                  return dst_data
         if tile_data.data.ndim == 3:
-            return tile_data.data[0]
+           return tile_data.data[0]
         else:
-            return tile_data.data
+           return tile_data.data
 
     def process_tile(self, tile: mercantile.Tile) -> None:
         """Process a single tile, merging data from both sources"""
