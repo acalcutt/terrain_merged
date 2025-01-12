@@ -15,6 +15,7 @@ from io import BytesIO
 from osgeo import gdal
 import tempfile
 import multiprocessing
+import itertools
 
 def should_exclude(r,g,b):
   """returns true if the r,g,b value indicates the tile should be excluded"""
@@ -76,7 +77,7 @@ def decode_terrainrgb(image_data, debug=False):
                 "count": 1,
                 "dtype": rasterio.float32,
                 "driver": "GTiff",
-                "crs": "EPSG:3857"
+                "crs": "EPSG:3857" # Setting the CRS here
             })
         
         return np.expand_dims(elevation, axis=0), kwargs, dataset.meta
@@ -198,7 +199,6 @@ def _process_tile(mbtiles_path, zoom, tile, meta):
             
             kwargs = tile_meta.copy()
             kwargs.update({
-                  "crs": tile_meta['crs'],
                   "transform": target_transform,
                   "width": tile_meta['width'],
                   "height": tile_meta['height'],
@@ -233,182 +233,188 @@ def _process_tile(mbtiles_path, zoom, tile, meta):
         return None, None
     return None, None
 
-def mbtiles_to_raster(mbtiles_path, zoom, selected_tiles=None, processes=multiprocessing.cpu_count()):
-  """Converts an MBTiles database to a list of (data, metadata) tuples, using multiprocessing."""
-  sources = []
-  if not selected_tiles:
-      selected_tiles = get_tiles_from_mbtiles(mbtiles_path, zoom)
+def _tile_generator(mbtiles_path, zoom, selected_tiles, processes):
+    """Generator that yields raster data and meta for each tile."""
+    if not selected_tiles:
+        selected_tiles = get_tiles_from_mbtiles(mbtiles_path, zoom)
 
-  print(f" - : Processing {len(selected_tiles)} tiles from {mbtiles_path} at zoom {zoom}")
-  
-  with multiprocessing.Pool(processes=processes) as pool:
-      results = pool.starmap(_process_tile, [(mbtiles_path, zoom, tile, None) for tile in selected_tiles])
+    print(f" - : Processing {len(selected_tiles)} tiles")
+    
+    with multiprocessing.Pool(processes=processes) as pool:
+        results = pool.starmap(_process_tile, [(mbtiles_path, zoom, tile, None) for tile in selected_tiles])
 
-      for data, meta in results:
-        if data is not None:
-            memfile = rasterio.MemoryFile(data)
-            sources.append((memfile, meta))
+        for data, meta in results:
+            if data is not None:
+                yield data, meta
 
-  if not sources:
-      return None
-  return sources
-
-def merge_mbtiles(mbtiles_path1, mbtiles_path2, zoom, selected_tiles=None):
+def merge_mbtiles(mbtiles_path1, mbtiles_path2, zoom, selected_tiles=None, processes=multiprocessing.cpu_count()):
     """Merges two MBTiles databases with a clipping area."""
     print(f" - Starting raster extraction from input files")
-    rasters1 = mbtiles_to_raster(mbtiles_path1, zoom, selected_tiles)
-    rasters2 = mbtiles_to_raster(mbtiles_path2, zoom, selected_tiles)
+    
+    
+    tile_generator1 = _tile_generator(mbtiles_path1, zoom, selected_tiles, processes)
+    tile_generator2 = _tile_generator(mbtiles_path2, zoom, selected_tiles, processes)
+    
+    rasters1 = []
+    rasters2 = []
+    
+    try:
+        # Get target metadata from one of the generators
+        first_tile_data2, first_tile_meta2 = next(tile_generator2)
+        rasters2.append((rasterio.MemoryFile(first_tile_data2), first_tile_meta2))
+        
+        target_memfile, target_meta = rasters2[0]
 
-    if not rasters1 and not rasters2:
+        def tile_data_generator(tile_generator, target_meta, target_memfile):
+          """Generator that yields reprojected raster data and meta"""
+          for data, meta in tile_generator:
+            if meta['crs'] is not None:
+                memfile = rasterio.MemoryFile(data)
+                transform, width, height = calculate_default_transform(
+                    meta['crs'], target_meta['crs'],
+                    meta['width'], meta['height'],
+                    *rasterio.transform.array_bounds(1, 1, meta['transform']),
+                    resolution=target_meta.get('res', (target_meta['transform'][2] - target_meta['transform'][0]) / target_meta['width']
+                ))
+                    
+                kwargs = meta.copy()
+                kwargs.update({
+                    "crs": target_meta['crs'],
+                    "transform": transform,
+                    "width": width,
+                    "height": height,
+                })
+                    
+                # Read source data
+                with memfile.open() as src:
+                  data = src.read()
+                
+                # Create reprojected raster
+                out_memfile = rasterio.MemoryFile()
+                with out_memfile.open(**kwargs) as dst:
+                    reproject(
+                        source=data,
+                        destination=rasterio.band(dst, 1),
+                        src_transform=meta['transform'],
+                        src_crs=meta['crs'],
+                        dst_transform=transform,
+                        dst_crs=target_meta['crs'],
+                        resampling=Resampling.nearest,
+                    )
+                yield out_memfile, kwargs
+            else:
+                print(" - Skipping re-projection as the CRS is None")
+                memfile = rasterio.MemoryFile(data)
+                yield memfile, meta
+
+        tile_generator1_reprojected = tile_data_generator(tile_generator1, target_meta, target_memfile)
+        all_sources = itertools.chain(rasters2, tile_generator1_reprojected)
+        
+        print(" - Starting raster merge")
+        
+        # Open all sources for merging
+        raster_sources = []
+        
+        first = True
+        for memfile, meta in all_sources:
+            if first:
+                first = False
+            raster_sources.append(memfile.open())
+        
+        if not raster_sources:
+            return None, None
+            
+        # Perform merge
+        merged_array, merged_transform = merge(raster_sources, nodata=np.nan)
+            
+        # Update metadata for merged result
+        merged_meta = target_meta.copy()
+        merged_meta.update({
+            "driver": "GTiff",
+            "height": merged_array.shape[1],
+            "width": merged_array.shape[2],
+            "transform": merged_transform,
+        })
+
+        # Create final output - return both the data and metadata
+        return merged_array, merged_meta
+    
+    except StopIteration:
       print(" - No raster data found, skipping merge")
       return None, None
-      
-    if not rasters1:
-        print(" - No rasters for file 1, skipping it")
-        all_sources = rasters2
-    elif not rasters2:
-        print(" - No rasters for file 2, skipping it")
-        all_sources = rasters1
-    else:
-        # Get target metadata
-        target_memfile, target_meta = rasters2[0] if rasters2 else rasters1[0]
 
-        try:
-            # Process first set of rasters
-            reprojected_rasters = []
-            for memfile, meta in rasters1:
-                if meta['crs'] is not None:
-                    transform, width, height = calculate_default_transform(
-                        meta['crs'], target_meta['crs'],
-                        meta['width'], meta['height'],
-                        *rasterio.transform.array_bounds(1, 1, meta['transform']),
-                        resolution=target_meta.get('res', (target_meta['transform'][2] - target_meta['transform'][0]) / target_meta['width']
-                    ))
+    finally:
+      # Clean up resources
+      for src in raster_sources:
+        src.close()
+      for memfile, _ in all_sources:
+        if hasattr(memfile, 'close'):
+            memfile.close()
 
-                    kwargs = meta.copy()
-                    kwargs.update({
-                        "crs": target_meta['crs'],
-                        "transform": transform,
-                        "width": width,
-                        "height": height,
-                    })
-
-                    # Read source data
-                    with memfile.open() as src:
-                        data = src.read()
-
-                    # Create reprojected raster
-                    out_memfile = rasterio.MemoryFile()
-                    with out_memfile.open(**kwargs) as dst:
-                        reproject(
-                            source=data,
-                            destination=rasterio.band(dst, 1),
-                            src_transform=meta['transform'],
-                            src_crs=meta['crs'],
-                            dst_transform=transform,
-                            dst_crs=target_meta['crs'],
-                            resampling=Resampling.nearest,
-                        )
-                    reprojected_rasters.append((out_memfile, kwargs))
-                else:
-                    print(" - Skipping re-projection as the CRS is None")
-                    reprojected_rasters.append((memfile, meta))
-
-            # Combine all sources
-            all_sources = rasters2 + reprojected_rasters
-            if not all_sources:
-                return None, None
-            
-            print(" - Starting raster merge")
-
-            # Open all sources for merging
-            raster_sources = []
-            for memfile, _ in all_sources:
-                raster_sources.append(memfile.open())
-
-            # Perform merge
-            merged_array, merged_transform = merge(raster_sources, nodata=np.nan)
-
-            # Update metadata for merged result
-            merged_meta = target_meta.copy()
-            merged_meta.update({
-                "driver": "GTiff",
-                "height": merged_array.shape[1],
-                "width": merged_array.shape[2],
-                "transform": merged_transform,
-            })
-
-            # Create final output - return both the data and metadata
-            return merged_array, merged_meta
-
-        finally:
-            # Clean up resources
-            for src in raster_sources:
-                src.close()
-            for memfile, _ in all_sources:
-                memfile.close()
 
 def create_mbtiles_from_raster(raster_data, raster_meta, output_mbtiles_path, zoom):
     if raster_data is not None:
       _create_tiles_from_raster(raster_data, raster_meta, output_mbtiles_path, zoom)
     else:
       print(" - No raster data provided, skipping tile creation")
+
 def _create_tiles_from_raster(raster_data, raster_meta, output_mbtiles_path, zoom):
-  """Create a new MBTiles file from raster data at a zoom level."""
-  conn = sqlite3.connect(output_mbtiles_path)
-  cursor = conn.cursor()
+    """Create a new MBTiles file from raster data at a zoom level."""
+    conn = sqlite3.connect(output_mbtiles_path)
+    cursor = conn.cursor()
   
-  try:
-    # Check if the 'tiles' table exists
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tiles';")
-    table_exists = cursor.fetchone()
+    try:
+        # Check if the 'tiles' table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tiles';")
+        table_exists = cursor.fetchone()
 
-    if not table_exists:
-      # Create the 'tiles' table only if it doesn't exist
-      cursor.execute("CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);")
-      conn.commit()
+        if not table_exists:
+            # Create the 'tiles' table only if it doesn't exist
+            cursor.execute("CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);")
+            conn.commit()
       
-    # Create a memory file with the complete raster for bounds calculation
-    with rasterio.MemoryFile() as memfile:
-        with memfile.open(**raster_meta) as src:
-            # Write the data
-            src.write(raster_data)
+        # Create a memory file with the complete raster for bounds calculation
+        with rasterio.MemoryFile() as memfile:
+            with memfile.open(**raster_meta) as src:
+                # Write the data
+                src.write(raster_data)
 
-            # Get bounds for tile calculation
-            bounds = src.bounds
+                # Get bounds for tile calculation
+                bounds = src.bounds
 
-            # Create tiles based on zoom level
-            tiles = list(mercantile.tiles(
-                bounds.left, bounds.bottom,
-                bounds.right, bounds.top,
-                zooms=[zoom]
-            ))
+                # Create tiles based on zoom level
+                tiles = list(mercantile.tiles(
+                    bounds.left, bounds.bottom,
+                    bounds.right, bounds.top,
+                    zooms=[zoom]
+                ))
 
-            print(f" - Creating {len(tiles)} output tiles")
+                print(f" - Creating {len(tiles)} output tiles")
 
-            for i, tile in enumerate(tiles):
-                bounds = get_tile_bounds(tile)
+                for i, tile in enumerate(tiles):
+                    bounds = get_tile_bounds(tile)
 
-                # Create window for the current tile
-                window = src.window(bounds.west, bounds.south, bounds.east, bounds.north)
+                    # Create window for the current tile
+                    window = src.window(bounds.west, bounds.south, bounds.east, bounds.north)
 
-                # Read data for this tile
-                tile_data = src.read(window=window)
+                    # Read data for this tile
+                    tile_data = src.read(window=window)
 
-                # Insert tile data into database
-                cursor.execute(
-                  "INSERT INTO tiles VALUES (?, ?, ?, ?)",
-                  (tile.z, tile.x, tile.y, sqlite3.Binary(tile_data.tobytes()))
-                )
-                conn.commit()
+                    # Insert tile data into database
+                    cursor.execute(
+                    "INSERT INTO tiles VALUES (?, ?, ?, ?)",
+                    (tile.z, tile.x, tile.y, sqlite3.Binary(tile_data.tobytes()))
+                    )
+                    conn.commit()
                 
-                if (i + 1) % 100 == 0:
-                    print(f" Created {i + 1} output tiles")
+                    if (i + 1) % 100 == 0:
+                        print(f" Created {i + 1} output tiles")
     
-    print(" - Finished tile creation")
+        print(" - Finished tile creation")
 
-  finally:
-    conn.close()
+    finally:
+        conn.close()
+
 def reproject_bounds(bounds, in_crs, out_crs):
   """Reprojects bounds to a new crs"""
   project = pyproj.Transformer.from_crs(in_crs, out_crs, always_xy=True).transform
@@ -442,6 +448,7 @@ def get_max_zoom_level(mbtiles_path):
     conn.close()
     return result[0] if result[0] is not None else 0 # if nothing is found, default to 0
 
+
 if __name__ == "__main__":
     mbtiles_path1 = "/opt/JAXA_AW3D30_2024_terrainrgb_z0-Z12_webp.mbtiles"
     mbtiles_path2 = "/opt/swissALTI3D_2024_terrainrgb_z0-Z16.mbtiles"
@@ -464,7 +471,7 @@ if __name__ == "__main__":
         merged_array, merged_meta = merge_mbtiles(mbtiles_path1, mbtiles_path2, zoom, selected_tiles)
 
         if merged_array is not None:
-            _create_tiles_from_raster(merged_array, merged_meta, output_mbtiles_path, zoom)
+            create_mbtiles_from_raster(merged_array, merged_meta, output_mbtiles_path, zoom)
             print(f"Successfully created mbtiles for zoom {zoom}")
         else:
             print(f"Could not merge mbtiles for zoom {zoom}, please check your data")
