@@ -1,28 +1,24 @@
 #!/bin/bash
 
-#custom version of rio rgbify which adds speed improvements is reccomended https://github.com/acalcutt/rio-rgbify/tree/merge
-
-INPUT_DIR=./france
-OUTPUT_DIR=./output
-
+# Set defaults for rio-rgbify
 [[ $THREADS ]] || THREADS=16
-[[ $BATCH ]] || BATCH=25
+[[ $BATCH ]] || BATCH=32
 [[ $MINZOOM ]] || MINZOOM=0
 [[ $MAXZOOM ]] || MAXZOOM=15
 [[ $FORMAT ]] || FORMAT=webp
-[[ $RESAMPLING ]] || RESAMPLING=lanczos
+[[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $INPUT_DIR ]] || INPUT_DIR=./france_warped
+[[ $OUTPUT_DIR ]] || OUTPUT_DIR=./output
+[[ $BASE_VALUE ]] || BASE_VALUE=-10000
+[[ $INTERVAL ]] || INTERVAL=0.1
+BASENAME=RGE_Alti_TerrainRGB_z${MINZOOM}-Z${MAXZOOM}_${RESAMPLING}_${FORMAT}
+mbtiles="${OUTPUT_DIR}/${BASENAME}.mbtiles"
+final_vrt="${OUTPUT_DIR}/${BASENAME}.vrt"
 
-BASENAME=RGE_Alti_TerrainRGB_${MINZOOM}-${MAXZOOM}_${FORMAT}
-vrtfile=${OUTPUT_DIR}/${BASENAME}.vrt
-vrtfile2=${OUTPUT_DIR}/${BASENAME}_warp.vrt
-mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
+[ -d "$OUTPUT_DIR" ] || mkdir -p "$OUTPUT_DIR" || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
-[ -d "$OUTPUT_DIR" ] || mkdir -p $OUTPUT_DIR || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
+find "${INPUT_DIR}" -name "*_warped_EPSG3857.tif" > "${OUTPUT_DIR}/warped.txt"
+gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" "${final_vrt}" -input_file_list "${OUTPUT_DIR}/warped.txt"
 
-#set max file limit
-ulimit -s 65536
-
-gdalbuildvrt -overwrite -resolution highest -r lanczos ${vrtfile} ${INPUT_DIR}/*.vrt
-gdalwarp -r lanczos -t_srs EPSG:3857 -dstnodata 0 ${vrtfile} ${vrtfile2}
-rio rgbify -v -b -10000 -i 0.1 --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT  ${vrtfile2} ${mbtiles}
-
+# convert that final raster into a mbtiles file
+rio rgbify -v -b "$BASE_VALUE" -i "$INTERVAL" --min-z "$MINZOOM" --max-z "$MAXZOOM" -j "$THREADS" --batch-size "$BATCH" --resampling "$RESAMPLING" --format "$FORMAT" "${final_vrt}" "${mbtiles}"
