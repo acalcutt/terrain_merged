@@ -5,23 +5,23 @@
 INPUT_DIR=./jaxa
 OUTPUT_DIR=./output
 
-[[ $THREADS ]] || THREADS=12
-[[ $BATCH ]] || BATCH=25
+[[ $THREADS ]] || THREADS=16
+[[ $BATCH ]] || BATCH=32
 [[ $MINZOOM ]] || MINZOOM=0
 [[ $MAXZOOM ]] || MAXZOOM=12
 [[ $FORMAT ]] || FORMAT=webp
-[[ $RESAMPLING ]] || RESAMPLING=lanczos
+[[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $BASE_VALUE ]] || BASE_VALUE=-32768
 
-BASENAME=JAXA_AW3D30_2024_Terrarium_${MINZOOM}-${MAXZOOM}_${FORMAT}
+BASENAME=JAXA_AW3D30_2024_Terrarium_z${MINZOOM}-Z${MAXZOOM}_${RESAMPLING}_${FORMAT}
 vrtfile=${OUTPUT_DIR}/${BASENAME}.vrt
 mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
 vrtfile2=${OUTPUT_DIR}/${BASENAME}_warp.vrt
 
 [ -d "$OUTPUT_DIR" ] || mkdir -p $OUTPUT_DIR || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
-#rm rio/*
-gdalbuildvrt -overwrite -resolution highest -r lanczos -srcnodata -9999 -vrtnodata -9999 ${vrtfile} ${INPUT_DIR}/*_DSM.tif
-gdalwarp -r lanczos -t_srs EPSG:3857 -dstnodata 0 ${vrtfile} ${vrtfile2}
-rio rgbify -v -e terrarium --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}
+gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" -srcnodata -9999 -vrtnodata -9999 ${vrtfile} ${INPUT_DIR}/*_DSM.tif
+gdalwarp -r "$RESAMPLING" -t_srs EPSG:3857 -dstnodata "$BASE_VALUE" ${vrtfile} ${vrtfile2}
+rio rgbify -v -e terrarium --min-z "$MINZOOM" --max-z "$MAXZOOM" -j "$THREADS" --batch-size "$BATCH" --resampling "$RESAMPLING" --format "$FORMAT" ${vrtfile2} ${mbtiles}
 
 
