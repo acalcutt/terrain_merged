@@ -1,0 +1,19 @@
+{
+    "source_type": "mbtiles",
+    "sources": [
+        {
+            "path": "/opt/terrain_merged_reorg/GEBCO/output/GEBCO_2024_TerrainRGB_z0-Z8_cubic_webp.mbtiles",
+            "encoding": "mapbox"
+        },
+        {
+            "path": "/opt/terrain_merged_reorg/JAXA_AW3D30/output/JAXA_AW3D30_2024_TerrainRGB_z0-Z12_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        }
+    ],
+    "output_path": "/opt/terrain_merged_reorg/merge/output/GEBCO_JAXA_2024_cubic_webp.mbtiles",
+    "output_encoding": "mapbox",
+    "output_format": "webp",
+    "resampling": "cubic",
+    "gaussian_blur_sigma": 0.8
+}
