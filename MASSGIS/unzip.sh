@@ -1,0 +1,1 @@
+unzip -j download/Lidar_Elevation_and_Shaded_Relief.zip "LiDAR_DEM.gdb/*" -d download/LiDAR_DEM.gdb/
