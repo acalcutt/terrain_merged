@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# --- Configuration ---
-OUTPUT_DIR=./output
-
 # Set defaults
 [[ $THREADS ]] || THREADS=8
 [[ $BATCH ]] || BATCH=1
@@ -10,7 +7,7 @@ OUTPUT_DIR=./output
 [[ $MAXZOOM ]] || MAXZOOM=14
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
-[[ $INPUT_DIR ]] || INPUT_DIR=/mnt/raid0/terrain_merged/MASSGIS/download/unzip2/Lidar_Elevation_2013to2021.jp2
+[[ $INPUT_FILE ]] || INPUT_FILE=download/Lidar_Elevation_2013to2021.jp2
 [[ $OUTPUT_DIR ]] || OUTPUT_DIR=./output
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
@@ -26,11 +23,11 @@ final_vrt="${OUTPUT_DIR}/${BASENAME}_warped.vrt"
 [ -d "$OUTPUT_DIR" ] || mkdir -p "$OUTPUT_DIR" || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
 # --- 1. Build Initial VRT ---
-gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" -srcnodata 1099 "${source_vrt}" "${INPUT_DIR}"
+gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" -srcnodata 1099 "${source_vrt}" "${INPUT_FILE}"
 
 # --- 2. Get Source Raster Information (Bounding Box in Source CRS) ---
-ul_line=$(gdalinfo "${INPUT_DIR}" | grep "Upper Left")
-lr_line=$(gdalinfo "${INPUT_DIR}" | grep "Lower Right")
+ul_line=$(gdalinfo "${INPUT_FILE}" | grep "Upper Left")
+lr_line=$(gdalinfo "${INPUT_FILE}" | grep "Lower Right")
 echo "$ul_line"
 echo "$lr_line"
 
@@ -49,7 +46,7 @@ echo "$lry"
 if ! [[ "$ulx" =~ ^[0-9.-]+$ && "$uly" =~ ^[0-9.-]+$ && "$lrx" =~ ^[0-9.-]+$ && "$lry" =~ ^[0-9.-]+$ ]]; then
   echo "ERROR: Could not extract numeric coordinates from gdalinfo output."
   echo "gdalinfo output:"
-  gdalinfo "${INPUT_DIR}"
+  gdalinfo "${INPUT_FILE}"
   exit 1
 fi
 
@@ -62,13 +59,9 @@ transformed_uly=$(echo "$ulx $uly" | gdaltransform -s_srs EPSG:26919 -t_srs "$CO
 transformed_lrx=$(echo "$lrx $lry" | gdaltransform -s_srs EPSG:26919 -t_srs "$COMMON_SRS" | awk '{print $1}')
 transformed_lry=$(echo "$lrx $lry" | gdaltransform -s_srs EPSG:26919 -t_srs "$COMMON_SRS" | awk '{print $2}')
 
-# --- 3a. Debug: Print Transformed Coordinates ---
+# --- 4. Debug: Print Transformed Coordinates ---
 echo "Transformed UL: $transformed_ulx, $transformed_uly"
 echo "Transformed LR: $transformed_lrx, $transformed_lry"
-
-# --- 4. Define Target Resolution ---
-#target_resolution=0.00000898 # (1 meter in EPSG:4326, APPROXIMATE)
-target_resolution=0.00000449 # (0.5 meter in EPSG:4326, APPROXIMATE)
 
 # --- 5.  Warp with Explicit Extent and Resolution ---
 # Ensure correct order: minx miny maxx maxy (longitude, latitude)
@@ -77,7 +70,6 @@ gdalwarp -overwrite \
   -r "$RESAMPLING" \
   -t_srs "$COMMON_SRS" \
   -te "$transformed_ulx" "$transformed_lry" "$transformed_lrx" "$transformed_uly" \
-  -tr "$target_resolution" "$target_resolution" \
   -dstnodata "$BASE_VALUE" \
   "${source_vrt}" \
   "${final_vrt}"
