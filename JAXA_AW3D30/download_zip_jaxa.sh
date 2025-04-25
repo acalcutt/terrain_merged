@@ -20,10 +20,10 @@ function myunzip()
 	fi
 	for file in $(unzip -l $1 | grep -Po "[^/]+_DSM.tif")
 	do
-		[ ! -f ../jaxa_temp/$file ] && unpack=true && break
+		[ ! -f ../jaxa/$file ] && unpack=true && break
 	done
 
-	$unpack && unzip -j -o $1 "*_DSM.tif" -d ../jaxa_temp/
+	$unpack && unzip -j -o $1 "*_DSM.tif" -d ../jaxa/
 }
 
 export -f mycurl myunzip
