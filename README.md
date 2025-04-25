@@ -17,6 +17,6 @@ SonnyDem_EUROPE
 SwissAlti  
 Tinitaly  
 
-2.) Use 'rio merge' and json files like the examples in the 'merge' folder to combine and layer the datasets into one file
+2.) Use 'rio merge' and json files like the examples in the 'merge' folder to combine and layer the datasets into one file like shown at https://github.com/acalcutt/terrain_merged/tree/main/merge#example-usage
 
 2.) ***optional*** If you have different level merged files (like in my example) and want to create a sparse tileset, use the tool merge/combine.py like shown at https://github.com/acalcutt/terrain_merged/tree/main/merge#create-sparse-tiles-from-merged-datasets
