@@ -52,12 +52,12 @@
             "mask_values": [-10000,0]
         }
     ],
-    "output_path": "/mnt/raid0/terrain_merged/merge/output/France_Merged_2024_z0-Z15_cubic_webp.mbtiles",
+    "output_path": "/mnt/raid0/terrain_merged/merge/output/Europe_Merged_2024_z0-Z13_cubic_webp.mbtiles",
     "output_encoding": "mapbox",
     "output_nodata": 0,
     "output_format": "webp",
     "resampling": "cubic",
-    "max_zoom": 15,
+    "max_zoom": 13,
     "gaussian_blur_sigma": 0.8,
-    "bounds_source": 8
+    "bounds_source": 1
 }
