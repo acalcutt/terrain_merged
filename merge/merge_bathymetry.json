@@ -3,17 +3,22 @@
     "sources": [
         {
             "path": "/opt/terrain_merged_reorg/GEBCO/output/GEBCO_2024_TerrainRGB_z0-Z8_cubic_webp.mbtiles",
-            "encoding": "mapbox"
+            "encoding": "mapbox",
+            "mask_values": [-10000]
         },
         {
             "path": "/opt/terrain_merged_reorg/JAXA_AW3D30/output/JAXA_AW3D30_2024_TerrainRGB_z0-Z12_cubic_webp.mbtiles",
             "encoding": "mapbox",
-            "mask_values": [-10000,0]
+            "mask_values": [-10000,0,-1]
         }
     ],
-    "output_path": "/opt/terrain_merged_reorg/merge/output/GEBCO_JAXA_2024_cubic_webp.mbtiles",
+    "output_path": "/opt/terrain_merged_reorg/merge/output/GEBCO_JAXA_Merged_Sparse_2024_z0-Z12_cubic_webp_v3.mbtiles",
     "output_encoding": "mapbox",
     "output_format": "webp",
     "resampling": "cubic",
-    "gaussian_blur_sigma": 0.8
+    "sparse_tiles": true,
+    "max_zoom": 12,
+    "gaussian_blur_sigma": 1.5,
+    "bounds": [-180.0, -85.0511, 180.0, 85.0511],
+    "output_nodata": -10000
 }
