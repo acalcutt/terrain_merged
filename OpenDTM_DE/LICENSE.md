@@ -1,6 +1,6 @@
 Info about license at https://www.opendem.info/opendtm_de.html
 
-Sources:
+Terrain data sources:
 
 - GDI-Th [geoportal.thueringen.de/gdi-th/download-offene-geodaten](https://geoportal.thueringen.de/gdi-th/download-offene-geodaten) - Datenlizenz Deutschland – Namensnennung – Version 2.0 ([dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0))*
 - © 2024 Geodatenportal Sachsen-Anhalt [www.lvermgeo.sachsen-anhalt.de](https://www.lvermgeo.sachsen-anhalt.de/) - Datenlizenz Deutschland – Namensnennung – Version 2.0 ([dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0))*
@@ -18,3 +18,6 @@ Sources:
 - Landesamt GeoInformation Bremen [www.geo.bremen.de](https://www.geo.bremen.de/) - Creative Commons - Namensnennung 4.0 International ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.de))*
 - © Geoportal Berlin [www.berlin.de/sen/sbw/stadtdaten/geoportal](https://www.berlin.de/sen/sbw/stadtdaten/geoportal/) - Datenlizenz Deutschland – Namensnennung – Version 2.0 ([dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0))*
 - LGL [www.lgl-bw.de](https://www.lgl-bw.de/) - Datenlizenz Deutschland – Namensnennung – Version 2.0 ([dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0))*
+
+Cutline (germany.fgb) is CC BY 4.0 
+© BKG 2025 CC BY 4.0, Data sources: https://sgx.geodatenzentrum.de/web_public/gdz/datenquellen/datenquellen_vg25.pdf

@@ -35,5 +35,6 @@ for file in "${INPUT_DIR}"/*.tif; do
 done
 
 gdalbuildvrt -overwrite -resolution highest -r $RESAMPLING ${vrtfile} ${INPUT_DIR}/*.tif
-gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata $BASE_VALUE ${vrtfile} ${vrtfile2}
+# Some elevation data outside the administrative boundary is broken so we clip out to avoid weird artifacts
+gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata $BASE_VALUE -cutline "$(dirname "$0")/germany.fgb" -crop_to_cutline ${vrtfile} ${vrtfile2}
 rio rgbify -v -b $BASE_VALUE -i $INTERVAL --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}
