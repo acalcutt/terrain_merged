@@ -8,7 +8,7 @@ OUTPUT_DIR=./output
 [[ $THREADS ]] || THREADS=12
 [[ $BATCH ]] || BATCH=1
 [[ $MINZOOM ]] || MINZOOM=0
-[[ $MAXZOOM ]] || MAXZOOM=16
+[[ $MAXZOOM ]] || MAXZOOM=15
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
 [[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
@@ -24,5 +24,6 @@ vrtfile2=${OUTPUT_DIR}/${BASENAME}_warp.vrt
 [ -d "$OUTPUT_DIR" ] || mkdir -p $OUTPUT_DIR || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
 gdalbuildvrt -overwrite -resolution highest -r $RESAMPLING ${vrtfile} ${INPUT_DIR}/*.tif
-gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata $NODATA ${vrtfile} ${vrtfile2}
+# Some elevation data outside the administrative boundary is broken so we clip out to avoid weird artifacts
+gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata $NODATA -cutline "$(dirname "$0")/sudtirol.fgb" -crop_to_cutline ${vrtfile} ${vrtfile2}
 rio rgbify -v -b $BASE_VALUE -i $INTERVAL --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}
