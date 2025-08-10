@@ -353,7 +353,14 @@ if __name__ == "__main__":
         default=-10000.0,
         help="The base value for 'mapbox' encoding."
     )
+    parser.add_argument(
+        "--source-nodata",
+        nargs='+',
+        type=float,
+        default=None,
+        help="List of elevation values from the source data that should be treated as no-data. These will be mapped to the HGT nodata value (-32768). Example: --source-nodata -10000 -9999"
+    )
 
     args = parser.parse_args()
 
-    convert_mbtiles_to_hgt(args.mbtiles_file, args.output_dir, args.zoom_level, args.encoding, args.interval, args.base_val)
+    convert_mbtiles_to_hgt(args.mbtiles_file, args.output_dir, args.zoom_level, args.encoding, args.interval, args.base_val, args.source_nodata)
