@@ -41,10 +41,11 @@ def decode_elevation_from_rgb_rio(data: np.ndarray, encoding: str, interval: flo
 
 # --- Tile Processing Function (for multiprocessing) ---
 
-def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, interval, base_val, source_nodata_values):
+# This function must be defined at the top level for multiprocessing to pickle it.
+def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, interval, base_val, source_nodata_values=None):
     """
     Processes a single tile for multiprocessing.
-    Applies source no-data masking.
+    Applies source no-data masking if specified.
     Returns a tuple: (cell_identifier_key, slice_start_lat, slice_end_lat, slice_start_lon, slice_end_lon, elevations_slice)
     or None if an error occurred or no valid data was produced.
     """
@@ -67,21 +68,20 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
         tile_data_bytes = result[0]
 
         img = Image.open(io.BytesIO(tile_data_bytes)).convert("RGB")
-        pixels = np.array(img)
+        pixels = np.array(img) # Shape HxWx3
 
         elevations = decode_elevation_from_rgb_rio(pixels, encoding, interval=interval, base_val=base_val)
 
-        # --- Apply Source NoData Value Handling ---
-        # If source_nodata_values are provided, replace decoded elevations that match
-        # these values with the HGT nodata value (-32768).
+        # Apply source NoData value handling if specified
         if source_nodata_values:
-            # Create a mask for all source_nodata_values.
-            # This assumes simple equality checks. If ranges were needed, it would be more complex.
+            # Create mask for pixels that match any source nodata value
+            # Use a tolerance for floating point comparison
             nodata_mask = np.zeros_like(elevations, dtype=bool)
             for nodata_val in source_nodata_values:
-                nodata_mask |= (elevations == nodata_val)
+                # Use np.isclose for better floating point comparison
+                nodata_mask |= np.isclose(elevations, nodata_val, rtol=1e-09, atol=1e-09)
             
-            # Set decoded elevations that match nodata values to the HGT nodata value (-32768).
+            # Set matched elevations to HGT nodata value
             elevations[nodata_mask] = -32768.0
 
         bounds = mercantile.bounds(tile)
@@ -133,16 +133,13 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
         tile_data_end_row = tile_data_start_row + hgt_rows_in_slice
         tile_data_end_col = tile_data_start_col + hgt_cols_in_slice
 
-        # Ensure these end indices do not exceed the `elevations` array dimensions
+        # Ensure we don't exceed tile data dimensions
         tile_data_end_row = min(tile_data_end_row, elevations.shape[0])
         tile_data_end_col = min(tile_data_end_col, elevations.shape[1])
         
         # If the resulting slice is valid
         if tile_data_end_row > tile_data_start_row and tile_data_end_col > tile_data_start_col:
             elevations_slice = elevations[tile_data_start_row:tile_data_end_row, tile_data_start_col:tile_data_end_col]
-            
-            # Return all info needed to place this slice into the correct HGT grid.
-            # The destination slice in hgt_grid uses the start indices and the actual shape of elevations_slice.
             return (cell_identifier_key, slice_start_lat, slice_start_lat + elevations_slice.shape[0], slice_start_lon, slice_start_lon + elevations_slice.shape[1], elevations_slice)
         else:
             return None
@@ -158,7 +155,8 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
 
 def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='mapbox', interval=0.01, base_val=-10000.0, source_nodata_values=None):
     """
-    Converts MBTiles to HGT files using multiprocessing and handles source no-data values.
+    Converts MBTiles to HGT files using multiprocessing for faster tile processing.
+    Handles source no-data values by mapping them to HGT nodata (-32768).
     """
 
     if not os.path.exists(output_dir):
@@ -183,17 +181,15 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
             try:
                 max_zoom = int(metadata['maxzoom'])
             except (ValueError, TypeError) as e:
-                print(f"Warning: Could not parse 'maxzoom' from MBTiles metadata: {e}. Proceeding without max zoom check.")
+                print(f"Warning: Could not parse 'maxzoom' from MBTiles metadata: {e}.")
                 max_zoom = 0
 
-        target_zoom_level = zoom_level
-        if max_zoom > 0:
-            target_zoom_level = min(zoom_level, max_zoom)
+        target_zoom_level = min(zoom_level, max_zoom) if max_zoom > 0 else zoom_level
         print(f"Using zoom level: {target_zoom_level}")
         print(f"Using encoding: {encoding}")
         if encoding == 'mapbox':
             print(f"Mapbox parameters: Interval={interval}, Base Value={base_val}")
-        if source_nodata_values: # This condition is checked here for clarity in logs
+        if source_nodata_values:
             print(f"Source NoData Values: {source_nodata_values}")
 
         # Fetch tile information
@@ -210,7 +206,7 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
         total_tiles = len(tiles_info)
         print(f"Found {total_tiles} tiles at zoom level {target_zoom_level}.")
 
-        # --- Identify unique HGT cells and pre-allocate grids ---
+        # Identify unique HGT cells
         print("Identifying unique HGT cells...")
         unique_hgt_cells = set()
         for zoom_level_db, x_db, y_db in tiles_info:
@@ -223,7 +219,7 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
         
         print(f"Found {len(unique_hgt_cells)} unique HGT cells.")
 
-        # Pre-allocate HGT grids with HGT nodata value (-32768)
+        # Pre-allocate HGT grids with proper NODATA value (-32768)
         main_hgt_cells = {}
         for cell_id in unique_hgt_cells:
             main_hgt_cells[cell_id] = np.full((3601, 3601), -32768, dtype=np.int16)
@@ -236,6 +232,7 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
         successful_tiles = 0
         failed_tiles = 0
         
+        # Use ProcessPoolExecutor
         with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = []
             for tile_info in tiles_info:
@@ -247,9 +244,10 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
                     encoding,
                     interval,
                     base_val,
-                    source_nodata_values # Pass the list of source nodata values
+                    source_nodata_values
                 ))
 
+            # Process results as they complete
             for i, future in enumerate(futures):
                 if (i + 1) % 1000 == 0 or (i + 1) == len(futures):
                     print(f"Processing {i+1}/{total_tiles} tiles...")
@@ -276,34 +274,36 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
 
         print(f"Finished processing tiles. Successful: {successful_tiles}, Failed: {failed_tiles}.")
         
-        # Write HGT files
+        # Write HGT files with correct naming convention
         print(f"Writing {len(main_hgt_cells)} HGT files...")
         for (lat_idx_key, lon_idx_key), hgt_grid in main_hgt_cells.items():
-            # Construct HGT filename according to convention
+            # HGT naming convention: NxxWxxx.hgt or SxxExxx.hgt
+            # Where xx/xxx are zero-padded latitude/longitude values
             if lat_idx_key >= 0:
                 lat_str = f"N{lat_idx_key:02d}"
             else:
                 lat_str = f"S{abs(lat_idx_key):02d}"
-            
-            if lon_idx_key < 0: # West longitude
+                
+            if lon_idx_key < 0:
                 lon_str = f"W{abs(lon_idx_key):03d}"
-            else: # East longitude
+            else:
                 lon_str = f"E{lon_idx_key:03d}"
             
             hgt_filename = f"{lat_str}{lon_str}.hgt"
             hgt_filepath = os.path.join(output_dir, hgt_filename)
 
             try:
-                # Convert to Big-Endian signed 16-bit integer bytes for HGT format
+                # Convert to big-endian int16 for HGT format
                 binary_data = hgt_grid.astype('>i2').tobytes()
                 
-                expected_size = 3601 * 3601 * 2 # 25,934,402 bytes
+                expected_size = 3601 * 3601 * 2  # 25,934,402 bytes
                 if len(binary_data) != expected_size:
-                    print(f"Warning: Data size mismatch for {hgt_filename}: {len(binary_data)} vs {expected_size} bytes.")
+                    print(f"Warning: Data size mismatch for {hgt_filename}: {len(binary_data)} vs {expected_size} bytes")
 
                 with open(hgt_filepath, 'wb') as f:
                     f.write(binary_data)
-                # print(f"Written: {hgt_filename} ({len(binary_data)} bytes)") # Uncomment for verbose output per file
+                    
+                print(f"Written: {hgt_filename} ({len(binary_data)} bytes)")
                 
             except Exception as e:
                 print(f"Error writing HGT file {hgt_filepath}: {e}")
@@ -333,34 +333,27 @@ if __name__ == "__main__":
         "-z", "--zoom-level",
         type=int,
         default=16,
-        help="The zoom level to extract data from. Higher zoom levels provide more detail."
+        help="The zoom level to extract data from."
     )
     parser.add_argument(
         "-e", "--encoding",
         choices=['terrarium', 'mapbox'],
         default='mapbox',
-        help="The encoding format of the MBTiles tiles. 'terrarium' (v1) uses (R*256 + G + B/256) - 32768. 'mapbox' uses base_val + (((R*65536) + (G*256) + B) * interval)."
+        help="The encoding format of the MBTiles tiles."
     )
     parser.add_argument(
         "--interval",
         type=float,
         default=0.01,
-        help="The interval value for 'mapbox' encoding. Defaults to 0.01 (for (R*65536 + G*256 + B)/100)."
+        help="The interval value for 'mapbox' encoding."
     )
     parser.add_argument(
         "--base-val",
         type=float,
         default=-10000.0,
-        help="The base value for 'mapbox' encoding. Defaults to -10000.0."
-    )
-    parser.add_argument(
-        "--source-nodata",
-        nargs='+', # Allows one or more arguments
-        type=float,
-        help="A list of elevation values from the source data that should be treated as no-data. These will be mapped to the HGT nodata value (-32768)."
+        help="The base value for 'mapbox' encoding."
     )
 
     args = parser.parse_args()
 
-    # Pass the source_nodata_values list to the conversion function
-    convert_mbtiles_to_hgt(args.mbtiles_file, args.output_dir, args.zoom_level, args.encoding, args.interval, args.base_val, args.source_nodata)
+    convert_mbtiles_to_hgt(args.mbtiles_file, args.output_dir, args.zoom_level, args.encoding, args.interval, args.base_val)
