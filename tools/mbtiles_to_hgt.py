@@ -86,6 +86,12 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
             
             # Set matched elevations to HGT nodata value BEFORE conversion to int16
             elevations[nodata_mask] = -32768.0
+        
+        # Also mask any obvious nodata values that might not be in the source_nodata_values list
+        # Common nodata indicators in terrain data
+        elevations[elevations < -30000] = -32768.0  # Very low values are likely nodata
+        elevations[np.isnan(elevations)] = -32768.0  # NaN values
+        elevations[np.isinf(elevations)] = -32768.0  # Infinite values
 
         bounds = mercantile.bounds(tile)
         
@@ -109,11 +115,15 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
         
         # Calculate indices in HGT grid (3601x3601 for 1 degree cells)
         # HGT files start from the southwest corner and go north/east
-        lat_offset_from_cell = bounds.north - (hgt_cell_key_lat + 1)  # Distance from north edge of cell
-        lon_offset_from_cell = bounds.west - hgt_cell_key_lon        # Distance from west edge of cell
+        # HGT row 0 = north edge, row 3600 = south edge
+        # HGT col 0 = west edge, col 3600 = east edge
         
-        start_hgt_lat_idx = int(round(-lat_offset_from_cell * 3600))  # Negative because HGT rows go south to north
-        start_hgt_lon_idx = int(round(lon_offset_from_cell * 3600))   # Positive because HGT cols go west to east
+        lat_offset_from_south = bounds.south - hgt_cell_key_lat  # Distance from south edge of cell
+        lon_offset_from_west = bounds.west - hgt_cell_key_lon    # Distance from west edge of cell
+        
+        # Convert to HGT indices (0-3600)
+        start_hgt_lat_idx = int(round((1.0 - (bounds.north - hgt_cell_key_lat)) * 3600))  # Flip for HGT: north=0, south=3600
+        start_hgt_lon_idx = int(round(lon_offset_from_west * 3600))                        # West=0, east=3600
         
         # Calculate end indices based on tile size
         end_hgt_lat_idx = start_hgt_lat_idx + elevations.shape[0]
