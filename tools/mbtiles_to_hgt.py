@@ -50,16 +50,20 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
     or None if an error occurred or no valid data was produced.
     """
     tile_z, tile_x, tile_y = tile_info
-    tile = mercantile.Tile(x=tile_x, y=tile_y, z=tile_z)
+    
+    # Convert from TMS to XYZ coordinates for mercantile
+    # MBTiles uses TMS (Y=0 at bottom), mercantile expects XYZ (Y=0 at top)
+    xyz_y = (2 ** tile_z) - tile_y - 1
+    tile = mercantile.Tile(x=tile_x, y=xyz_y, z=tile_z)
 
     conn = None
     try:
         conn = sqlite3.connect(mbtiles_path)
         cursor = conn.cursor()
 
-        # Fetch tile data
+        # Fetch tile data (using original TMS coordinates for database query)
         tile_data_query = "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?"
-        cursor.execute(tile_data_query, (tile.z, tile.x, tile.y))
+        cursor.execute(tile_data_query, (tile_z, tile_x, tile_y))
         result = cursor.fetchone()
         
         if result is None:
@@ -85,16 +89,11 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
 
         bounds = mercantile.bounds(tile)
         
-        # Calculate HGT cell key (consistent with main function)
-        hgt_cell_key_lat = math.floor(bounds.north)
-        hgt_cell_key_lon = math.floor(bounds.west)
+        # Calculate HGT cell key using LOWER-LEFT (southwest) corner coordinates
+        # HGT naming convention uses the southwest corner, not northwest
+        hgt_cell_key_lat = math.floor(bounds.south)  # Use south boundary
+        hgt_cell_key_lon = math.floor(bounds.west)   # Use west boundary
         
-        # Adjust for South latitudes and East longitudes to match HGT naming convention
-        if bounds.north < 0:
-            hgt_cell_key_lat = -(int(math.floor(abs(bounds.south))) + 1)
-        if bounds.west >= 0: # East longitude
-            hgt_cell_key_lon = int(math.floor(bounds.east))
-            
         cell_identifier_key = (hgt_cell_key_lat, hgt_cell_key_lon)
 
         # Calculate HGT slice indices based on tile bounds and cell start
@@ -109,11 +108,12 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
         arcsec_per_pixel = pixel_resolution * 3600.0
         
         # Calculate indices in HGT grid (3601x3601 for 1 degree cells)
-        lat_offset_from_cell = bounds.north - (hgt_cell_key_lat + 1)  # +1 because HGT starts from north edge
-        lon_offset_from_cell = bounds.west - hgt_cell_key_lon
+        # HGT files start from the southwest corner and go north/east
+        lat_offset_from_cell = bounds.north - (hgt_cell_key_lat + 1)  # Distance from north edge of cell
+        lon_offset_from_cell = bounds.west - hgt_cell_key_lon        # Distance from west edge of cell
         
-        start_hgt_lat_idx = int(round(-lat_offset_from_cell * 3600))  # Negative because lat decreases going down
-        start_hgt_lon_idx = int(round(lon_offset_from_cell * 3600))
+        start_hgt_lat_idx = int(round(-lat_offset_from_cell * 3600))  # Negative because HGT rows go south to north
+        start_hgt_lon_idx = int(round(lon_offset_from_cell * 3600))   # Positive because HGT cols go west to east
         
         # Calculate end indices based on tile size
         end_hgt_lat_idx = start_hgt_lat_idx + elevations.shape[0]
@@ -213,21 +213,18 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
         total_tiles = len(tiles_info)
         print(f"Found {total_tiles} tiles at zoom level {target_zoom_level}.")
 
-        # Identify unique HGT cells (using consistent logic)
+        # Identify unique HGT cells (using southwest corner coordinates)
         print("Identifying unique HGT cells...")
         unique_hgt_cells = set()
         for zoom_level_db, x_db, y_db in tiles_info:
-            tile = mercantile.Tile(x=x_db, y=y_db, z=zoom_level_db)
+            # Convert from TMS to XYZ coordinates for mercantile
+            xyz_y = (2 ** zoom_level_db) - y_db - 1
+            tile = mercantile.Tile(x=x_db, y=xyz_y, z=zoom_level_db)
             bounds = mercantile.bounds(tile)
             
-            hgt_cell_key_lat = math.floor(bounds.north)
-            hgt_cell_key_lon = math.floor(bounds.west)
-            
-            # Adjust for South latitudes and East longitudes to match HGT naming convention
-            if bounds.north < 0:
-                hgt_cell_key_lat = -(int(math.floor(abs(bounds.south))) + 1)
-            if bounds.west >= 0: # East longitude
-                hgt_cell_key_lon = int(math.floor(bounds.east))
+            # HGT naming uses southwest corner coordinates
+            hgt_cell_key_lat = math.floor(bounds.south)  # Use south boundary
+            hgt_cell_key_lon = math.floor(bounds.west)   # Use west boundary
                 
             unique_hgt_cells.add((hgt_cell_key_lat, hgt_cell_key_lon))
         
@@ -374,4 +371,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     convert_mbtiles_to_hgt(args.mbtiles_file, args.output_dir, args.zoom_level, args.encoding, args.interval, args.base_val, args.source_nodata)
-
