@@ -46,7 +46,7 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
     """
     Processes a single tile for multiprocessing.
     Applies source no-data masking if specified.
-    Returns a tuple: (cell_identifier_key, slice_start_lat, slice_end_lat, slice_start_lon, slice_end_lon, elevations_slice)
+    Returns a tuple: (cell_identifier_key, slice_start_lat, slice_end_lat, slice_start_lon, slice_end_lon, elevations_slice_int16)
     or None if an error occurred or no valid data was produced.
     """
     tile_z, tile_x, tile_y = tile_info
@@ -74,25 +74,27 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
 
         # Apply source NoData value handling if specified
         if source_nodata_values:
-            # Create mask for pixels that match any source nodata value
-            # Use a tolerance for floating point comparison
+            # Use a mask for pixels matching any source nodata value
+            # np.isclose is good for float comparisons
             nodata_mask = np.zeros_like(elevations, dtype=bool)
             for nodata_val in source_nodata_values:
-                # Use np.isclose for better floating point comparison
                 nodata_mask |= np.isclose(elevations, nodata_val, rtol=1e-09, atol=1e-09)
             
-            # Set matched elevations to HGT nodata value
+            # Set matched elevations to HGT nodata value BEFORE conversion to int16
             elevations[nodata_mask] = -32768.0
 
         bounds = mercantile.bounds(tile)
         
-        # Determine HGT cell start for index calculation
-        hgt_cell_actual_start_lat = math.floor(bounds.north)
-        hgt_cell_actual_start_lon = math.floor(bounds.west)
-
-        # Calculate HGT cell key
+        # Calculate HGT cell key (consistent with main function)
         hgt_cell_key_lat = math.floor(bounds.north)
         hgt_cell_key_lon = math.floor(bounds.west)
+        
+        # Adjust for South latitudes and East longitudes to match HGT naming convention
+        if bounds.north < 0:
+            hgt_cell_key_lat = -(int(math.floor(abs(bounds.south))) + 1)
+        if bounds.west >= 0: # East longitude
+            hgt_cell_key_lon = int(math.floor(bounds.east))
+            
         cell_identifier_key = (hgt_cell_key_lat, hgt_cell_key_lon)
 
         # Calculate HGT slice indices based on tile bounds and cell start
@@ -140,7 +142,12 @@ def process_tile_for_mp(tile_info, mbtiles_path, target_zoom_level, encoding, in
         # If the resulting slice is valid
         if tile_data_end_row > tile_data_start_row and tile_data_end_col > tile_data_start_col:
             elevations_slice = elevations[tile_data_start_row:tile_data_end_row, tile_data_start_col:tile_data_end_col]
-            return (cell_identifier_key, slice_start_lat, slice_start_lat + elevations_slice.shape[0], slice_start_lon, slice_start_lon + elevations_slice.shape[1], elevations_slice)
+            
+            # Convert to int16 and clamp to valid HGT range in the worker process
+            # Values already set to -32768.0 (from source nodata) will remain -32768 after conversion
+            elev_slice_int16 = np.clip(np.round(elevations_slice).astype(np.int16), -32767, 32767)
+            
+            return (cell_identifier_key, slice_start_lat, slice_start_lat + elev_slice_int16.shape[0], slice_start_lon, slice_start_lon + elev_slice_int16.shape[1], elev_slice_int16)
         else:
             return None
 
@@ -206,7 +213,7 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
         total_tiles = len(tiles_info)
         print(f"Found {total_tiles} tiles at zoom level {target_zoom_level}.")
 
-        # Identify unique HGT cells
+        # Identify unique HGT cells (using consistent logic)
         print("Identifying unique HGT cells...")
         unique_hgt_cells = set()
         for zoom_level_db, x_db, y_db in tiles_info:
@@ -215,6 +222,13 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
             
             hgt_cell_key_lat = math.floor(bounds.north)
             hgt_cell_key_lon = math.floor(bounds.west)
+            
+            # Adjust for South latitudes and East longitudes to match HGT naming convention
+            if bounds.north < 0:
+                hgt_cell_key_lat = -(int(math.floor(abs(bounds.south))) + 1)
+            if bounds.west >= 0: # East longitude
+                hgt_cell_key_lon = int(math.floor(bounds.east))
+                
             unique_hgt_cells.add((hgt_cell_key_lat, hgt_cell_key_lon))
         
         print(f"Found {len(unique_hgt_cells)} unique HGT cells.")
@@ -255,14 +269,10 @@ def convert_mbtiles_to_hgt(mbtiles_path, output_dir, zoom_level=16, encoding='ma
                 try:
                     result = future.result()
                     if result:
-                        cell_id, s_lat, e_lat, s_lon, e_lon, elev_slice = result
+                        cell_id, s_lat, e_lat, s_lon, e_lon, elev_slice_int16 = result
                         
-                        # Convert elevation data to int16 and clamp to valid range
-                        elev_slice_int16 = np.round(elev_slice).astype(np.int16)
-                        # Clamp to valid int16 range, using -32768 for invalid data
-                        elev_slice_int16 = np.clip(elev_slice_int16, -32767, 32767)
-                        
-                        # Place into HGT grid
+                        # Data is already converted to int16 in the worker process
+                        # Just place it directly into the HGT grid
                         hgt_grid = main_hgt_cells[cell_id]
                         hgt_grid[s_lat:e_lat, s_lon:e_lon] = elev_slice_int16
                         successful_tiles += 1
@@ -364,3 +374,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     convert_mbtiles_to_hgt(args.mbtiles_file, args.output_dir, args.zoom_level, args.encoding, args.interval, args.base_val, args.source_nodata)
+
