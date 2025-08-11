@@ -1,0 +1,73 @@
+{
+    "source_type": "mbtiles",
+    "sources": [
+        {
+            "path": "/mnt/raid0/terrain_merged/JAXA_AW3D30/output/JAXA_AW3D30_2024_TerrainRGB_z0-Z12_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/SonnyDem_EUROPE/output/SONNY_DEM_2024_Europe_TerrainRGB_z0-Z13_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/MASSGIS/output/MASSGIS_TerrainRGB_z0-Z14_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/Tinitaly/output/TinItally_2024_TerrainRGB_z0-Z15_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/RGE_ALTI/output/RGE_Alti_Indian_Ocean_TerrainRGB_z0-Z15_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/RGE_ALTI/output/RGE_Alti_Guyana_TerrainRGB_z0-Z15_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/RGE_ALTI/output/RGE_Alti_Caribbean_TerrainRGB_z0-Z15_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/RGE_ALTI/output/RGE_Alti_SPM_TerrainRGB_z0-Z15_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/RGE_ALTI/output/RGE_Alti_FranceCorsica_TerrainRGB_z0-Z15_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/OpenDTM_DE/output/OpenDTM_DE_2024_TerrainRGB_z0-Z16_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/Austria/output/Austria_2024_TerrainRGB_z0-Z16_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/SwissAlti/output/SWISS_Alti_2024_TerrainRGB_z0-Z16_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        }
+    ],
+    "output_path": "/mnt/raid0/terrain_merged/merge/output/Germany_Merged_2024_z0-Z16_cubic_webp.mbtiles",
+    "output_encoding": "mapbox",
+    "output_nodata": 0,
+    "output_format": "webp",
+    "resampling": "cubic",
+    "max_zoom": 16,
+    "gaussian_blur_sigma": 0.8,
+    "bounds_source": 9
+}

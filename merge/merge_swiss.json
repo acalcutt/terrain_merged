@@ -47,6 +47,16 @@
             "mask_values": [-10000,0]
         },
         {
+            "path": "/mnt/raid0/terrain_merged/OpenDTM_DE/output/OpenDTM_DE_2024_TerrainRGB_z0-Z16_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
+            "path": "/mnt/raid0/terrain_merged/Austria/output/Austria_2024_TerrainRGB_z0-Z16_cubic_webp.mbtiles",
+            "encoding": "mapbox",
+            "mask_values": [-10000,0]
+        },
+        {
             "path": "/mnt/raid0/terrain_merged/SwissAlti/output/SWISS_Alti_2024_TerrainRGB_z0-Z16_cubic_webp.mbtiles",
             "encoding": "mapbox",
             "mask_values": [-10000,0]
@@ -59,5 +69,5 @@
     "resampling": "cubic",
     "max_zoom": 16,
     "gaussian_blur_sigma": 0.8,
-    "bounds_source": 9
+    "bounds_source": 11
 }

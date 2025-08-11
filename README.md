@@ -9,6 +9,8 @@ This project creates a merged mapbox TerrainRGB mbtiles file from multiple indep
 1.) Generate each dataset you would like to use with the best settings possible for that dataset. Each dataset folder includes scripts to download an generate the source terrainrgb datasets
 
 ### Right now the following datasets are available  
+[Austrian DTM 1m 2024](https://data.bev.gv.at/geonetwork/srv/ger/catalog.search#/metadata/5ce253fc-b7c5-4362-97af-6556c18a45d9)
+[German OpenDTM 1m 2024](https://www.opendem.info/opendtm_de.html)
 GEBCO  
 JAXA_AW3D30  
 MASSGIS  
