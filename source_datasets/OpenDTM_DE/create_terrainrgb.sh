@@ -15,6 +15,7 @@ OUTPUT_DIR=./output
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
 [[ $NODATA ]] || NODATA=$BASE_VALUE
+[[ $PREPARED_CUTLINE ]] || PREPARED_CUTLINE="./cutline/germany_cutline_25832.shp"
 
 BASENAME=OpenDTM_DE_2024_TerrainRGB_z${MINZOOM}-z${MAXZOOM}_${RESAMPLING}_${FORMAT}
 vrtfile=${OUTPUT_DIR}/${BASENAME}.vrt
@@ -36,5 +37,5 @@ done
 
 gdalbuildvrt -overwrite -resolution highest -r $RESAMPLING ${vrtfile} ${INPUT_DIR}/*.tif
 # Some elevation data outside the administrative boundary is broken so we clip out to avoid weird artifacts
-gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata $BASE_VALUE -cutline "$(dirname "$0")/germany.fgb" -crop_to_cutline ${vrtfile} ${vrtfile2}
+gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata $BASE_VALUE -cutline $PREPARED_CUTLINE ${vrtfile} ${vrtfile2}
 rio rgbify -v -b $BASE_VALUE -i $INTERVAL --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}
