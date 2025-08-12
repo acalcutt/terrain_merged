@@ -62,7 +62,7 @@
             "mask_values": [-10000,0]
         }
     ],
-    "output_path": "../source_datasets/merge/output/Europe_Merged_2024_z0-Z13_cubic_webp.mbtiles",
+    "output_path": "./output/Europe_Merged_2024_z0-Z13_cubic_webp.mbtiles",
     "output_encoding": "mapbox",
     "output_nodata": 0,
     "output_format": "webp",
