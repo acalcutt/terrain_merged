@@ -6,11 +6,15 @@ INPUT_DIR=./swissalti
 OUTPUT_DIR=./output
 
 [[ $THREADS ]] || THREADS=12
-[[ $BATCH ]] || BATCH=25
+[[ $BATCH ]] || BATCH=1
 [[ $MINZOOM ]] || MINZOOM=0
-[[ $MAXZOOM ]] || MAXZOOM=15
+[[ $MAXZOOM ]] || MAXZOOM=16
 [[ $FORMAT ]] || FORMAT=webp
-[[ $RESAMPLING ]] || RESAMPLING=lanczos
+[[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
+[[ $BASE_VALUE ]] || BASE_VALUE=-10000
+[[ $INTERVAL ]] || INTERVAL=0.1
+[[ $NODATA ]] || NODATA=$BASE_VALUE
 
 BASENAME=SWISS_Alti_2024_TerrainRGB_${MINZOOM}-${MAXZOOM}_${FORMAT}
 vrtfile=${OUTPUT_DIR}/${BASENAME}.vrt
@@ -22,6 +26,6 @@ vrtfile2=${OUTPUT_DIR}/${BASENAME}_warp.vrt
 #set max file limit
 ulimit -s 65536
 
-gdalbuildvrt -overwrite -resolution highest -r lanczos ${vrtfile} ${INPUT_DIR}/*.tif
-gdalwarp -r lanczos -t_srs EPSG:3857 -dstnodata 0 ${vrtfile} ${vrtfile2}
-rio rgbify -v -b -10000 -i 0.1 --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}
+gdalbuildvrt -overwrite -resolution highest -r $RESAMPLING ${vrtfile} ${INPUT_DIR}/*.tif
+gdalwarp -r $RESAMPLING -t_srs $COMMON_SRS -dstnodata $NODATA ${vrtfile} ${vrtfile2}
+rio rgbify -v -b $BASE_VALUEy -i $INTERVAL --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}
