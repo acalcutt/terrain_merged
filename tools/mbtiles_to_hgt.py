@@ -13,7 +13,7 @@ from rasterio.warp import reproject
 from rasterio.io import MemoryFile
 
 # --- Decoding Functions ---
-def decode_elevation_from_rgb_rio(data: np.ndarray, encoding: str, interval: float = 0.01, base_val: float = -10000.0) -> np.ndarray:
+def decode_elevation_from_rgb_rio(data: np.ndarray, encoding: str, interval: float = 0.1, base_val: float = -10000.0) -> np.ndarray:
     data = data.astype(np.float64)
     if encoding == "terrarium":
         return (data[..., 0] * 256.0 + data[..., 1] + data[..., 2] / 256.0) - 32768.0
@@ -209,7 +209,7 @@ def create_hgt_with_proper_merging_flexible(tile_data_list, hgt_bounds, output_p
         print(f"  Error saving HGT file '{output_path}': {e}")
         return False
 
-def convert_mbtiles_to_hgt_flexible(mbtiles_path, output_dir, zoom_level=12, encoding='mapbox', interval=0.01, base_val=-10000.0, source_nodata_values=None, tile_src_crs_arg='EPSG:3857', resampling_method=Resampling.bilinear):
+def convert_mbtiles_to_hgt_flexible(mbtiles_path, output_dir, zoom_level=12, encoding='mapbox', interval=0.1, base_val=-10000.0, source_nodata_values=None, tile_src_crs_arg='EPSG:3857', resampling_method=Resampling.bilinear):
     
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -324,7 +324,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output-dir", default="fixed_hgt", help="Output directory")
     parser.add_argument("-z", "--zoom-level", type=int, default=12, help="Zoom level")
     parser.add_argument("-e", "--encoding", choices=['terrarium', 'mapbox'], default='mapbox', help="Encoding")
-    parser.add_argument("--interval", type=float, default=0.01, help="Mapbox interval")
+    parser.add_argument("--interval", type=float, default=0.1, help="Mapbox interval")
     parser.add_argument("--base-val", type=float, default=-10000.0, help="Mapbox base value")
     parser.add_argument("--source-nodata", nargs='+', type=float, default=None, help="List of values to treat as no-data in source tiles.")
     # The --tile-src-crs argument is actually not directly used by reproject because mercantile bounds are lat/lon.
