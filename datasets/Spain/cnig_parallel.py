@@ -44,22 +44,18 @@ def create_chrome_driver(download_dir, worker_id):
 
 def download_file(url, base_download_dir, worker_id):
     """
-    Downloads and verifies a specific file based on the filename on the webpage.
-    Each worker gets a unique temp directory for isolation.
+    Downloads and verifies a specific file based on the filename on the webpage,
+    but skips the download if the file already exists.
     """
     driver = None
     user_data_dir = None
     temp_download_dir = None
     
     try:
-        print(f"[Worker {worker_id}] Starting download: {url}")
+        print(f"[Worker {worker_id}] Processing: {url}")
         
-        # Create a unique temporary directory for this download
-        temp_download_dir = os.path.join(base_download_dir, f"temp_{worker_id}_{uuid.uuid4().hex[:8]}")
-        os.makedirs(temp_download_dir, exist_ok=True)
-        
-        # Create driver for this worker, using the unique temp download directory
-        driver, user_data_dir = create_chrome_driver(temp_download_dir, worker_id)
+        # Create driver just to get the filename first
+        driver, user_data_dir = create_chrome_driver(None, worker_id) # Using None for temp_download_dir initially
         
         # Get the page and retrieve the filename from the source
         driver.get(url)
@@ -73,21 +69,41 @@ def download_file(url, base_download_dir, worker_id):
             print(f"[Worker {worker_id}] Could not find filename on page. Aborting.")
             return f"FAILED: Filename not found on page for {url}"
 
+        # --- Check if the file already exists in the final directory ---
+        final_path = os.path.join(base_download_dir, expected_filename)
+        if os.path.exists(final_path):
+            print(f"[Worker {worker_id}] File '{expected_filename}' already exists. Skipping download.")
+            return f"SKIPPED: {expected_filename}"
+
+        # If the file doesn't exist, proceed with the download
+        print(f"[Worker {worker_id}] File not found locally. Starting download...")
+        
+        # Quit the initial driver to create a new one with the correct download path
+        driver.quit()
+        
+        # Create a unique temporary directory for this download
+        temp_download_dir = os.path.join(base_download_dir, f"temp_{worker_id}_{uuid.uuid4().hex[:8]}")
+        os.makedirs(temp_download_dir, exist_ok=True)
+        
+        # Re-create driver with the correct temporary download directory
+        driver, user_data_dir = create_chrome_driver(temp_download_dir, worker_id)
+        driver.get(url)
+        time.sleep(5)
+
         # Click the download button
         download_icon = driver.find_element(By.CSS_SELECTOR, "i.fa-download")
         parent = download_icon.find_element(By.XPATH, "..")
         parent.click()
         print(f"[Worker {worker_id}] Download button clicked for {url}")
         
-        # Wait for the specific expected file to appear
+        # Wait for the specific expected file to appear in the temp directory
         max_wait_time = 60
         start_time = time.time()
+        download_path = os.path.join(temp_download_dir, expected_filename)
+        
         while time.time() - start_time < max_wait_time:
-            # Check for the file (and not a partial .crdownload file)
-            download_path = os.path.join(temp_download_dir, expected_filename)
             if os.path.exists(download_path) and not download_path.endswith('.crdownload'):
-                # Also verify the file is not still being written to
-                # This is more robust than just checking for existence
+                # Wait for the file to finish writing
                 old_size = -1
                 while True:
                     new_size = os.path.getsize(download_path)
@@ -101,9 +117,8 @@ def download_file(url, base_download_dir, worker_id):
         
         if os.path.exists(download_path):
             # Move the verified file to the final destination
-            final_path = os.path.join(base_download_dir, expected_filename)
             shutil.move(download_path, final_path)
-            print(f"[Worker {worker_id}] Verified and moved '{expected_filename}' to final directory.")
+            print(f"[Worker {worker_id}] Moved '{expected_filename}' to final directory.")
             return f"SUCCESS: {expected_filename}"
         else:
             print(f"[Worker {worker_id}] Expected file '{expected_filename}' not detected within time limit.")
