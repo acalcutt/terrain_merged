@@ -3,7 +3,6 @@
 # Custom version of rio rgbify which adds speed improvements is required:
 # https://github.com/acalcutt/rio-rgbify/tree/merge
 
-# --- Paths ---
 INPUT_DIR=./swissalti
 OUTPUT_DIR=./output
 
@@ -15,12 +14,13 @@ OUTPUT_DIR=./output
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
 [[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
-[[ $BASE_VALUE ]] || BASE_VALUE=-10000
-[[ $INTERVAL ]] || INTERVAL=0.1
+
+# For Terrarium, the "floor" is traditionally -32768
+[[ $BASE_VALUE ]] || BASE_VALUE=-32768
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- File Naming ---
-BASENAME=SWISS_Alti_2024_TerrainRGB_${MINZOOM}-${MAXZOOM}_${FORMAT}
+BASENAME=SWISS_Alti_2024_Terrarium_${MINZOOM}-${MAXZOOM}_${FORMAT}
 vrtfile=${OUTPUT_DIR}/${BASENAME}.vrt
 vrtfile2=${OUTPUT_DIR}/${BASENAME}_warp.vrt
 mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
@@ -32,17 +32,15 @@ mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
 ulimit -s 65536
 
 # 1. Build the VRT
-gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" \
-    "${vrtfile}" "${INPUT_DIR}"/*.tif
+gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" "${vrtfile}" "${INPUT_DIR}"/*.tif
 
 # 2. Warp to common SRS
-gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" \
-    "${vrtfile}" "${vrtfile2}"
+gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
 
-# 3. Convert to Terrain-RGB MBTiles
+# 3. Convert to Terrarium RGB MBTiles
+# Note: -i and -b are excluded because they are hardcoded in the terrarium profile
 rio rgbify -v \
-    -b "$BASE_VALUE" \
-    -i "$INTERVAL" \
+    -e terrarium \
     --min-z "$MINZOOM" \
     --max-z "$MAXZOOM" \
     -j "$THREADS" \
