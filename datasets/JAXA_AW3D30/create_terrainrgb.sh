@@ -6,7 +6,7 @@ INPUT_DIR=./jaxa
 OUTPUT_DIR=./output
 
 [[ $THREADS ]] || THREADS=16
-[[ $BATCH ]] || BATCH=32
+[[ $BATCH ]] || BATCH=1
 [[ $MINZOOM ]] || MINZOOM=0
 [[ $MAXZOOM ]] || MAXZOOM=12
 [[ $FORMAT ]] || FORMAT=webp
