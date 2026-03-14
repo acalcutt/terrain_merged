@@ -14,6 +14,8 @@ OUTPUT_DIR=./output
 [[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 [[ $PREPARED_CUTLINE ]] || PREPARED_CUTLINE="./cutline/germany_cutline_25832.shp"
 
@@ -37,5 +39,5 @@ done
 
 gdalbuildvrt -overwrite -resolution highest -r $RESAMPLING ${vrtfile} ${INPUT_DIR}/*.tif
 # Some elevation data outside the administrative boundary is broken so we clip out to avoid weird artifacts
-gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata $BASE_VALUE -cutline $PREPARED_CUTLINE ${vrtfile} ${vrtfile2}
+gdalwarp -r $RESAMPLING -s_srs EPSG:25832 -t_srs $COMMON_SRS -dstnodata "$NODATA" -cutline $PREPARED_CUTLINE ${vrtfile} ${vrtfile2}
 rio rgbify -v -b $BASE_VALUE -i $INTERVAL --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}

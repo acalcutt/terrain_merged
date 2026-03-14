@@ -16,6 +16,8 @@ OUTPUT_DIR=./output
 [[ $RESAMPLING ]] || RESAMPLING=cubic
 [[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-32768
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- File Naming ---
@@ -31,14 +33,14 @@ mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
 ulimit -s 65536
 
 # 1. Build the VRT
-# Map JAXA NoData (-9999) to the VRT
+# Map JAXA NoData from the source TIFs to the VRT
 gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" \
-    -srcnodata "$NODATA" -vrtnodata "$NODATA" \
+    -srcnodata -9999 -vrtnodata -9999 \
     "${vrtfile}" "${INPUT_DIR}"/*_DSM.tif
 
 # 2. Warp to common SRS (Defaulting to EPSG:4326)
-# We use -dstnodata $BASE_VALUE to match the Terrarium floor
-gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$BASE_VALUE" "${vrtfile}" "${vrtfile2}"
+# We use -dstnodata "$NODATA" to match the Terrarium floor
+gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
 
 # 3. Convert to Terrarium RGB MBTiles
 # Note: -i (interval) and -b (base) are not used in terrarium mode

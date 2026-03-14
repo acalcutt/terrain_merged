@@ -6,11 +6,16 @@ INPUT_DIR=./download
 OUTPUT_DIR=./output
 
 [[ $THREADS ]] || THREADS=16
-[[ $BATCH ]] || BATCH=50
+[[ $BATCH ]] || BATCH=1
 [[ $MINZOOM ]] || MINZOOM=0
 [[ $MAXZOOM ]] || MAXZOOM=13
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
+[[ $BASE_VALUE ]] || BASE_VALUE=-32768
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
+[[ $NODATA ]] || NODATA=$BASE_VALUE
 
 BASENAME=SONNY_DEM_2024_Europe_TerrainRGB_z${MINZOOM}-Z${MAXZOOM}_${RESAMPLING}_${FORMAT}
 vrtfile=${OUTPUT_DIR}/${BASENAME}.vrt
@@ -20,5 +25,5 @@ vrtfile2=${OUTPUT_DIR}/${BASENAME}_warp.vrt
 [ -d "$OUTPUT_DIR" ] || mkdir -p $OUTPUT_DIR || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
 gdalbuildvrt -overwrite -resolution highest -r $RESAMPLING -srcnodata -9999 -vrtnodata -9999 ${vrtfile} ${INPUT_DIR}/*.hgt
-gdalwarp -r $RESAMPLING -t_srs EPSG:3857 -dstnodata 0 ${vrtfile} ${vrtfile2}
+gdalwarp -r $RESAMPLING -t_srs "$COMMON_SRS" -dstnodata "$NODATA" ${vrtfile} ${vrtfile2}
 rio rgbify -v -e terrarium --min-z $MINZOOM --max-z $MAXZOOM -j $THREADS --batch-size $BATCH --resampling $RESAMPLING --format $FORMAT ${vrtfile2} ${mbtiles}

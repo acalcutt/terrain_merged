@@ -17,6 +17,8 @@ OUTPUT_DIR=./output
 
 # For Terrarium, the "floor" is traditionally -32768
 [[ $BASE_VALUE ]] || BASE_VALUE=-32768
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- File Naming ---

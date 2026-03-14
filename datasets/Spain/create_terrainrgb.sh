@@ -15,6 +15,8 @@ INTERMEDIATE_VRT_DIR=./vrt_intermediate
 [[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 BASENAME=Spain_2002-2015_TerrainRGB_z${MINZOOM}-Z${MAXZOOM}_${RESAMPLING}_${FORMAT}

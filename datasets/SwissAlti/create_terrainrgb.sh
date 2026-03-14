@@ -17,6 +17,8 @@ OUTPUT_DIR=./output
 [[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- File Naming ---

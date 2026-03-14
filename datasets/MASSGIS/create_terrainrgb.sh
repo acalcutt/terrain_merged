@@ -9,9 +9,12 @@
 [[ $RESAMPLING ]] || RESAMPLING=cubic
 [[ $INPUT_FILE ]] || INPUT_FILE=download/Lidar_Elevation_2013to2021.jp2
 [[ $OUTPUT_DIR ]] || OUTPUT_DIR=./output
+[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
-[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
+[[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- Derived Variables ---
 BASENAME=MASSGIS_TerrainRGB_z${MINZOOM}-Z${MAXZOOM}_${RESAMPLING}_${FORMAT}
@@ -70,7 +73,7 @@ gdalwarp -overwrite \
   -r "$RESAMPLING" \
   -t_srs "$COMMON_SRS" \
   -te "$transformed_ulx" "$transformed_lry" "$transformed_lrx" "$transformed_uly" \
-  -dstnodata "$BASE_VALUE" \
+  -dstnodata "$NODATA" \
   "${source_vrt}" \
   "${final_vrt}"
 # Check if gdalwarp command succeeded

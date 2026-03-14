@@ -2,15 +2,19 @@
 
 # Set defaults for rio-rgbify
 [[ $THREADS ]] || THREADS=16
-[[ $BATCH ]] || BATCH=5
+[[ $BATCH ]] || BATCH=1
 [[ $MINZOOM ]] || MINZOOM=0
 [[ $MAXZOOM ]] || MAXZOOM=15
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $INPUT_DIR ]] || INPUT_DIR=./france_warped
 [[ $OUTPUT_DIR ]] || OUTPUT_DIR=./output
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
+[[ $NODATA ]] || NODATA=$BASE_VALUE
 
 [ -d "$OUTPUT_DIR" ] || mkdir -p "$OUTPUT_DIR" || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 

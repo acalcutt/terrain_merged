@@ -17,6 +17,8 @@ OUTPUT_DIR=./output
 [[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
+# Note: If generating a standalone MBTiles source (not merging later),
+# setting NODATA=0 via env var is recommended for a more visually correct map.
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- File Naming ---
@@ -32,13 +34,13 @@ mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
 ulimit -s 65536
 
 # 1. Build the VRT
-# Using $NODATA (-9999) to correctly mask JAXA empty sea/void areas
+# Map JAXA NoData from the source TIFs to correctly mask empty sea/void areas
 gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" \
-    -srcnodata "$NODATA" -vrtnodata "$NODATA" \
+    -srcnodata -9999 -vrtnodata -9999 \
     "${vrtfile}" "${INPUT_DIR}"/*_DSM.tif
 
 # 2. Warp to common SRS (Defaulting to EPSG:4326)
-gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$BASE_VALUE" "${vrtfile}" "${vrtfile2}"
+gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
 
 # 3. Convert to Terrain-RGB MBTiles
 rio rgbify -v \
