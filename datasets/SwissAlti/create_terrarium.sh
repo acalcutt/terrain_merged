@@ -13,7 +13,6 @@ OUTPUT_DIR=./output
 [[ $MAXZOOM ]] || MAXZOOM=16
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
-[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 
 # For Terrarium, the "floor" is traditionally -32768
 [[ $BASE_VALUE ]] || BASE_VALUE=-32768
@@ -37,7 +36,7 @@ ulimit -s 65536
 gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" "${vrtfile}" "${INPUT_DIR}"/*.tif
 
 # 2. Warp to common SRS
-gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
+gdalwarp -r "$RESAMPLING" -t_srs EPSG:3857 -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
 
 # 3. Convert to Terrarium RGB MBTiles
 # Note: -i and -b are excluded because they are hardcoded in the terrarium profile

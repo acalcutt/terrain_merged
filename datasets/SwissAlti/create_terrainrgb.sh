@@ -14,7 +14,6 @@ OUTPUT_DIR=./output
 [[ $MAXZOOM ]] || MAXZOOM=16
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
-[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
 # Note: If generating a standalone MBTiles source (not merging later),
@@ -38,7 +37,7 @@ gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" \
     "${vrtfile}" "${INPUT_DIR}"/*.tif
 
 # 2. Warp to common SRS
-gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" \
+gdalwarp -r "$RESAMPLING" -t_srs EPSG:3857 -dstnodata "$NODATA" \
     "${vrtfile}" "${vrtfile2}"
 
 # 3. Convert to Terrain-RGB MBTiles

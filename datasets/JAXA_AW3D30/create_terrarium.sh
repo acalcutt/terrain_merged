@@ -14,13 +14,14 @@ OUTPUT_DIR=./output
 [[ $MAXZOOM ]] || MAXZOOM=12
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
-[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
 [[ $BASE_VALUE ]] || BASE_VALUE=-32768
 # Note: If generating a standalone MBTiles source (not merging later),
 # setting NODATA=0 via env var is recommended for a more visually correct map.
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- File Naming ---
+
+
 BASENAME=JAXA_AW3D30_2024_Terrarium_z${MINZOOM}-Z${MAXZOOM}_${RESAMPLING}_${FORMAT}
 vrtfile=${OUTPUT_DIR}/${BASENAME}.vrt
 vrtfile2=${OUTPUT_DIR}/${BASENAME}_warp.vrt
@@ -40,7 +41,7 @@ gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" \
 
 # 2. Warp to common SRS (Defaulting to EPSG:4326)
 # We use -dstnodata "$NODATA" to match the Terrarium floor
-gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
+gdalwarp -r "$RESAMPLING" -t_srs EPSG:3857 -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
 
 # 3. Convert to Terrarium RGB MBTiles
 # Note: -i (interval) and -b (base) are not used in terrarium mode
