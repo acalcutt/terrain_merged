@@ -23,7 +23,7 @@ gdal_translate ${vrtfile3} ${mbtilesfile} -of MBTILES
 echo "Create MBTiles Overview"
 gdaladdo ${mbtilesfile}
 
-sqlite3 ${mbtiles} 'UPDATE metadata SET value = "JAXA ALOS World 3D 30m (AW3D30) converted with gdaldem" WHERE name = "description";'
-sqlite3 ${mbtiles} 'UPDATE metadata SET value = "baselayer" WHERE name = "type";'
-sqlite3 ${mbtiles} 'INSERT INTO metadata (name,value) VALUES(''attribution'',''<a href="https://earth.jaxa.jp/en/data/policy/">AW3D30 (JAXA)</a>'');'
+sqlite3 ${mbtiles} "UPDATE metadata SET value = 'JAXA ALOS World 3D 30m (AW3D30) converted with gdaldem' WHERE name = 'description';"
+sqlite3 ${mbtiles} "UPDATE metadata SET value = 'baselayer' WHERE name = 'type';"
+sqlite3 ${mbtiles} "INSERT INTO metadata (name,value) VALUES('attribution','<a href=\"https://earth.jaxa.jp/en/data/policy/\">AW3D30 (JAXA)</a>');"
 
