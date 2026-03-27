@@ -8,12 +8,14 @@ INPUT_DIR=./jaxa
 OUTPUT_DIR=./output
 
 # --- Options (Defaults) ---
-[[ $THREADS ]] || THREADS=16
+[[ $THREADS ]] || THREADS=32
 [[ $BATCH ]] || BATCH=1
 [[ $MINZOOM ]] || MINZOOM=0
 [[ $MAXZOOM ]] || MAXZOOM=12
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
+[[ $BOUNDS ]] || BOUNDS="-180 -85.0511287798066 180 85.0511287798066"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
 # Note: If generating a standalone MBTiles source (not merging later),
@@ -21,6 +23,7 @@ OUTPUT_DIR=./output
 [[ $NODATA ]] || NODATA=$BASE_VALUE
 
 # --- File Naming ---
+
 
 
 BASENAME=JAXA_AW3D30_2024_TerrainRGB_z${MINZOOM}-Z${MAXZOOM}_${RESAMPLING}_${FORMAT}
@@ -41,7 +44,7 @@ gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" \
     "${vrtfile}" "${INPUT_DIR}"/*_DSM.tif
 
 # 2. Warp to common SRS (Defaulting to EPSG:4326)
-gdalwarp -r "$RESAMPLING" -t_srs EPSG:3857 -dstnodata "$NODATA" "${vrtfile}" "${vrtfile2}"
+gdalwarp -r "$RESAMPLING" -t_srs "$COMMON_SRS" -dstnodata "$NODATA" -te $BOUNDS "${vrtfile}" "${vrtfile2}"
 
 # 3. Convert to Terrain-RGB MBTiles
 rio rgbify -v \

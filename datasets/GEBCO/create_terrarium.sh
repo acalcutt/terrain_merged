@@ -11,8 +11,11 @@ OUTPUT_DIR=./output
 [[ $MAXZOOM ]] || MAXZOOM=8
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
+[[ $BOUNDS ]] || BOUNDS="-180 -85.0511287798066 180 85.0511287798066"
 [[ $BASE_VALUE ]] || BASE_VALUE=-32768
 [[ $NODATA ]] || NODATA=$BASE_VALUE
+
 
 
 
@@ -24,7 +27,7 @@ mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
 [ -d "$OUTPUT_DIR" ] || mkdir -p $OUTPUT_DIR || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
 gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" ${vrtfile} ${INPUT_DIR}/*.tif
-gdalwarp -r "$RESAMPLING" -s_srs epsg:4326 -t_srs EPSG:3857 -dstnodata "$NODATA" ${vrtfile} ${vrtfile2}
+gdalwarp -r "$RESAMPLING" -s_srs epsg:4326 -t_srs "$COMMON_SRS" -dstnodata "$NODATA" -te $BOUNDS ${vrtfile} ${vrtfile2}
 rio rgbify -v -e terrarium --min-z "$MINZOOM" --max-z "$MAXZOOM" -j "$THREADS" --batch-size "$BATCH" --resampling "$RESAMPLING" --format "$FORMAT" ${vrtfile2} ${mbtiles}
 sqlite3 ${mbtiles} "CREATE UNIQUE INDEX IF NOT EXISTS tile_index on tiles (zoom_level, tile_column, tile_row);"
 sqlite3 ${mbtiles} "UPDATE metadata SET value = 'GEBCO 2025 Grid converted with rio-rgbify' WHERE name = 'description';"

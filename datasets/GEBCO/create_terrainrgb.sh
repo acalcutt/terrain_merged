@@ -11,9 +11,12 @@ OUTPUT_DIR=./output
 [[ $MAXZOOM ]] || MAXZOOM=8
 [[ $FORMAT ]] || FORMAT=webp
 [[ $RESAMPLING ]] || RESAMPLING=cubic
+[[ $COMMON_SRS ]] || COMMON_SRS="EPSG:4326"
+[[ $BOUNDS ]] || BOUNDS="-180 -85.0511287798066 180 85.0511287798066"
 [[ $BASE_VALUE ]] || BASE_VALUE=-10000
 [[ $INTERVAL ]] || INTERVAL=0.1
 [[ $NODATA ]] || NODATA=$BASE_VALUE
+
 
 
 
@@ -25,7 +28,7 @@ mbtiles=${OUTPUT_DIR}/${BASENAME}.mbtiles
 [ -d "$OUTPUT_DIR" ] || mkdir -p $OUTPUT_DIR || { echo "error: $OUTPUT_DIR " 1>&2; exit 1; }
 
 gdalbuildvrt -overwrite -resolution highest -r "$RESAMPLING" ${vrtfile} ${INPUT_DIR}/*.tif
-gdalwarp -r "$RESAMPLING" -s_srs epsg:4326 -t_srs EPSG:3857 -dstnodata "$NODATA" ${vrtfile} ${vrtfile2}
+gdalwarp -r "$RESAMPLING" -s_srs epsg:4326 -t_srs "$COMMON_SRS" -dstnodata "$NODATA" -te $BOUNDS ${vrtfile} ${vrtfile2}
 rio rgbify -v -b "$BASE_VALUE" -i "$INTERVAL" --min-z "$MINZOOM" --max-z "$MAXZOOM" -j "$THREADS" --batch-size "$BATCH" --resampling "$RESAMPLING" --format "$FORMAT" ${vrtfile2} ${mbtiles}
 
 
