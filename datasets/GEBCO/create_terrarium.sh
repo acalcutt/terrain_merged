@@ -1,6 +1,8 @@
 ﻿#!/bin/bash
 
-#custom version of rio rgbify which adds speed improvements is reccomended https://github.com/acalcutt/rio-rgbify/tree/merge
+# Requires rio-rgbify-merge, which adds the merge command and speed improvements:
+#   pip install rio-rgbify-merge
+#   https://github.com/TechIdiots-LLC/rio-rgbify-merge
 
 INPUT_DIR=./gebco
 OUTPUT_DIR=./output
